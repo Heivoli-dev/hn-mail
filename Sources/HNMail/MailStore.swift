@@ -44,8 +44,8 @@ final class MailStore: ObservableObject {
     var visible: [MailMessage] {
         let base: [MailMessage]
         switch folder {
-        case .todo: base = messages.filter { $0.mailbox == .contact && replied[$0.id] == nil }
-        case .replied: base = messages.filter { replied[$0.id] != nil }
+        case .todo: base = messages.filter { $0.mailbox == .contact && !isReplied($0) }
+        case .replied: base = messages.filter { isReplied($0) }
         case .all: base = messages.filter { $0.mailbox == .contact }
         case .news: base = messages.filter { $0.mailbox == .news }
         }
@@ -56,16 +56,28 @@ final class MailStore: ObservableObject {
 
     func count(_ folder: Folder) -> Int {
         switch folder {
-        case .todo: return messages.filter { $0.mailbox == .contact && replied[$0.id] == nil }.count
-        case .replied: return messages.filter { replied[$0.id] != nil }.count
+        case .todo: return messages.filter { $0.mailbox == .contact && !isReplied($0) }.count
+        case .replied: return messages.filter { isReplied($0) }.count
         case .all: return messages.filter { $0.mailbox == .contact }.count
-        case .news: return messages.filter { $0.mailbox == .news && replied[$0.id] == nil }.count
+        case .news: return messages.filter { $0.mailbox == .news && !isReplied($0) }.count
         }
     }
 
     var selected: MailMessage? { messages.first { $0.id == selectedID } }
 
-    func isReplied(_ message: MailMessage) -> Bool { replied[message.id] != nil }
+    func isReplied(_ message: MailMessage) -> Bool { message.repliedAt != nil || replied[message.id] != nil }
+
+    func repliedLabel(_ message: MailMessage) -> String {
+        guard isReplied(message) else { return "" }
+        let by = message.repliedBy.isEmpty ? teamName : message.repliedBy
+        return by == teamName ? "Répondu" : "Répondu par \(by)"
+    }
+
+    /// Ton prénom, affiché à l'équipe (« Répondu par … »).
+    var teamName: String {
+        let saved = UserDefaults.standard.string(forKey: "teamName") ?? ""
+        return saved.isEmpty ? (Host.current().localizedName ?? "Mac") : saved
+    }
 
     func refresh() async {
         inboxConfigured = InboxAPI.isConfigured
@@ -77,11 +89,12 @@ final class MailStore: ObservableObject {
             var unique = Set<String>()
             messages = all.filter { unique.insert($0.id).inserted }.sorted { $0.date > $1.date }
             // Notifie seulement les mails jamais vus (pas au tout premier chargement).
-            let fresh = messages.filter { !seen.contains($0.id) && replied[$0.id] == nil }
+            let fresh = messages.filter { !seen.contains($0.id) && !isReplied($0) }
             if !seen.isEmpty { Notifier.shared.notify(fresh) }
             seen.formUnion(messages.map(\.id))
             UserDefaults.standard.set(Array(seen.suffix(2000)), forKey: seenKey)
             updateBadge()
+            await pushPendingReplied()
             error = nil
             if selectedID == nil || selected == nil { selectedID = visible.first?.id }
         } catch {
@@ -90,9 +103,43 @@ final class MailStore: ObservableObject {
     }
 
     func markReplied(_ message: MailMessage, _ value: Bool = true) {
+        // Mise à jour immédiate dans l'app, puis enregistrement sur le serveur pour toute l'équipe.
+        if let index = messages.firstIndex(where: { $0.id == message.id }) {
+            messages[index].repliedAt = value ? Date() : nil
+            messages[index].repliedBy = value ? teamName : ""
+        }
         replied[message.id] = value ? Date() : nil
-        UserDefaults.standard.set(replied.mapValues { $0.timeIntervalSince1970 }, forKey: repliedKey)
+        saveReplied()
         updateBadge()
+        Task {
+            do {
+                try await InboxAPI().setReplied(id: message.id, value: value, by: teamName)
+                replied[message.id] = nil
+                saveReplied()
+            } catch {
+                self.error = "État « répondu » pas encore synchronisé : \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func saveReplied() {
+        UserDefaults.standard.set(replied.mapValues { $0.timeIntervalSince1970 }, forKey: repliedKey)
+    }
+
+    /// Envoie au serveur les mails marqués « répondu » sur ce Mac mais pas encore partagés.
+    private func pushPendingReplied() async {
+        for message in messages where replied[message.id] != nil && message.repliedAt == nil {
+            if (try? await InboxAPI().setReplied(id: message.id, value: true, by: teamName)) != nil {
+                replied[message.id] = nil
+                if let index = messages.firstIndex(where: { $0.id == message.id }) {
+                    messages[index].repliedAt = Date()
+                    messages[index].repliedBy = teamName
+                }
+            }
+        }
+        // Les mails déjà marqués sur le serveur n'ont plus besoin d'être gardés ici.
+        for message in messages where message.repliedAt != nil { replied[message.id] = nil }
+        saveReplied()
     }
 
     /// Premier lancement : charge les mails puis vérifie régulièrement les nouveaux.
@@ -101,7 +148,8 @@ final class MailStore: ObservableObject {
         started = true
         Notifier.shared.onOpen = { [weak self] id in
             guard let self else { return }
-            self.folder = self.replied[id] == nil ? (self.messages.first { $0.id == id }?.mailbox == .news ? .news : .todo) : .replied
+            let message = self.messages.first { $0.id == id }
+            self.folder = message.map { self.isReplied($0) } == true ? .replied : (message?.mailbox == .news ? .news : .todo)
             self.search = ""
             self.selectedID = id
         }

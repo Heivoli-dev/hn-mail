@@ -92,7 +92,7 @@ struct MessageListView: View {
 
     var body: some View {
         List(store.visible, selection: $store.selectedID) { message in
-            MessageRow(message: message, replied: store.isReplied(message)).tag(message.id)
+            MessageRow(message: message, replied: store.isReplied(message), repliedLabel: store.repliedLabel(message)).tag(message.id)
         }
         .listStyle(.inset)
         .overlay {
@@ -115,6 +115,7 @@ struct MessageListView: View {
 struct MessageRow: View {
     let message: MailMessage
     let replied: Bool
+    var repliedLabel = "Répondu"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -125,7 +126,7 @@ struct MessageRow: View {
             }
             Text(message.subject).fontWeight(.semibold).lineLimit(1)
             Text(message.snippet).foregroundStyle(.secondary).lineLimit(2)
-            Text(replied ? "Répondu" : message.category.rawValue)
+            Text(replied ? repliedLabel : message.category.rawValue)
                 .font(.caption2.weight(.bold))
                 .padding(.horizontal, 7).padding(.vertical, 2)
                 .background(Capsule().fill(replied ? Color.green.opacity(0.15) : brandColor.opacity(0.12)))
@@ -518,6 +519,7 @@ struct SettingsView: View {
     @State private var editingKey = false
     @State private var showKey = false
     @AppStorage("pollMinutes") private var pollMinutes = 2
+    @AppStorage("teamName") private var teamName = ""
 
     var body: some View {
         Form {
@@ -578,6 +580,14 @@ struct SettingsView: View {
                 Text("Brevo (envoi des réponses)")
             } footer: {
                 Text("Crée une clé dédiée à HN Mail sur app.brevo.com › SMTP & API › Clés API.")
+            }
+
+            Section {
+                TextField("Ton prénom", text: $teamName, prompt: Text(Host.current().localizedName ?? "Mac"))
+            } header: {
+                Text("Équipe")
+            } footer: {
+                Text("Affiché aux autres membres de l'équipe : « Répondu par … ». L'état « Répondu » est partagé entre toutes les apps HN Mail.")
             }
 
             Section {

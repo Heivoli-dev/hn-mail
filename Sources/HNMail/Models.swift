@@ -14,6 +14,8 @@ struct MailMessage: Identifiable, Hashable {
     let messageIdHeader: String
     let mailbox: Mailbox
     var attachments: [String] = []
+    var repliedAt: Date? = nil
+    var repliedBy: String = ""
 
     var firstName: String {
         let source = fromName.isEmpty ? fromEmail.components(separatedBy: "@").first ?? "" : fromName

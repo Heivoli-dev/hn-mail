@@ -38,6 +38,18 @@ struct InboxAPI {
         return ((json["messages"] as? [[String: Any]]) ?? []).compactMap(Self.parse)
     }
 
+    /// Marque un mail « répondu » (ou à traiter) pour toute l'équipe.
+    func setReplied(id: String, value: Bool, by name: String) async throws {
+        guard let key = Self.key, Self.isConfigured else { throw AppError.message("Ajoute la clé HN Mail dans les Réglages.") }
+        var request = URLRequest(url: Self.url.appendingPathComponent("replied"))
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["id": id, "value": value, "by": name])
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw AppError.message("Le serveur n'a pas enregistré l'état du mail.") }
+    }
+
     static func parse(_ item: [String: Any]) -> MailMessage? {
         guard let id = item["id"] as? String else { return nil }
         let text = (item["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -55,7 +67,9 @@ struct InboxAPI {
             body: text,
             messageIdHeader: item["messageId"] as? String ?? "",
             mailbox: mailbox,
-            attachments: item["attachments"] as? [String] ?? [])
+            attachments: item["attachments"] as? [String] ?? [],
+            repliedAt: parseDate(item["repliedAt"] as? String),
+            repliedBy: item["repliedBy"] as? String ?? "")
     }
 
     static func parseDate(_ value: String?) -> Date? {

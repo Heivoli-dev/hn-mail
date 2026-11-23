@@ -113,7 +113,11 @@ function setMessages(list) {
   messages = (list || []).map((m) => ({ ...m, fromEmail: (m.replyTo || m.fromEmail || '').toLowerCase(), text: (m.text || '').trim(), dateObj: new Date(m.date || m.receivedAt || Date.now()) }))
     .sort((a, b) => b.dateObj - a.dateObj);
 }
-const isReplied = (m) => Object.prototype.hasOwnProperty.call(replied, m.id);
+const isReplied = (m) => !!m.repliedAt || Object.prototype.hasOwnProperty.call(replied, m.id);
+const repliedLabel = (m) => {
+  const by = m.repliedBy || state.teamName || '';
+  return !by || by === state.teamName ? 'Répondu' : `Répondu par ${by}`;
+};
 function inFolder(m, f) {
   if (f === 'todo') return m.mailbox !== 'news' && !isReplied(m);
   if (f === 'replied') return isReplied(m);
@@ -148,7 +152,7 @@ function render() {
       const when = m.dateObj.toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
       return `<div class="item${m.id === selectedId ? ' on' : ''}" data-id="${esc(m.id)}"><div class="top"><strong>${esc(m.fromName || m.fromEmail)}</strong><time>${esc(when)}</time></div>
         <span class="sub">${esc(m.subject)}</span><span class="pre">${esc(m.text.slice(0, 220))}</span>
-        <span class="tag${isReplied(m) ? ' done' : ''}">${isReplied(m) ? 'Répondu' : esc(cat)}</span></div>`;
+        <span class="tag${isReplied(m) ? ' done' : ''}">${isReplied(m) ? esc(repliedLabel(m)) : esc(cat)}</span></div>`;
     }).join('');
   }
   renderMain();
@@ -176,6 +180,8 @@ function renderMain() {
   $('#toggle-replied').addEventListener('click', async () => {
     state = await call('setReplied', { messageId: m.id, value: !isReplied(m) });
     replied = state.replied || {};
+    setMessages(state.messages);
+    shownId = null;
     render();
   });
   mountComposer($('#reply-host'), {
@@ -238,6 +244,7 @@ function mountComposer(host, target) {
         inReplyTo: target.inReplyTo || '', messageId: target.messageId || '',
       });
       replied = state.replied || replied;
+      if (target.messageId) setMessages(state.messages);
       msg.className = 'msg ok'; msg.textContent = `Envoyé à ${email} ✓`;
       render();
     } catch (e) {
@@ -287,6 +294,7 @@ function renderSettings() {
   $('#brevo-saved').hidden = !state.brevoConfigured || brevoEditing;
   $('#brevo-edit').hidden = state.brevoConfigured && !brevoEditing;
   $('#notif').checked = state.notifications !== false;
+  $('#team').value = state.teamName || '';
   $('#poll').value = String(state.pollMinutes || 2);
 }
 let inboxEditing = false;
@@ -312,6 +320,7 @@ $('#brevo-save').addEventListener('click', async () => {
   if (key.length < 20) { $('#settings-error').textContent = 'Clé Brevo trop courte.'; return; }
   state = await call('saveBrevoKey', { key }); brevoEditing = false; $('#brevo-key').value = ''; renderSettings(); render();
 });
+$('#team').addEventListener('change', async (e) => { state = await call('setPrefs', { teamName: e.target.value }); render(); });
 $('#notif').addEventListener('change', async (e) => { state = await call('setPrefs', { notifications: e.target.checked }); });
 $('#poll').addEventListener('change', async (e) => { state = await call('setPrefs', { pollMinutes: Number(e.target.value) }); });
 

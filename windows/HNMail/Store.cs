@@ -73,6 +73,16 @@ public sealed class Store
         set { State["notifications"] = value; Save(); }
     }
 
+    public string TeamName
+    {
+        get
+        {
+            var saved = State["teamName"]?.GetValue<string>() ?? "";
+            return saved.Length > 0 ? saved : Environment.UserName;
+        }
+        set { State["teamName"] = (value ?? "").Trim(); Save(); }
+    }
+
     // ----- mails déjà vus / répondus -----
     public HashSet<string> Seen()
     {

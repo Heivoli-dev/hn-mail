@@ -30,6 +30,18 @@ public sealed class Services(Store store)
         return json?["messages"] as JsonArray ?? new JsonArray();
     }
 
+    /// <summary>Marque un mail « répondu » (ou à traiter) pour toute l'équipe.</summary>
+    public async Task SetRepliedAsync(string id, bool value, string by)
+    {
+        var key = store.GetSecret("inboxKey");
+        if (string.IsNullOrEmpty(key) || key.Length < 24) throw new AppException("Ajoute la clé HN Mail dans les Réglages.");
+        using var request = new HttpRequestMessage(HttpMethod.Post, InboxUrl + "/replied");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        request.Content = new StringContent(new JsonObject { ["id"] = id, ["value"] = value, ["by"] = by }.ToJsonString(), Encoding.UTF8, "application/json");
+        using var response = await Http.SendAsync(request);
+        if (!response.IsSuccessStatusCode) throw new AppException("Le serveur n'a pas enregistré l'état du mail.");
+    }
+
     public async Task SendAsync(JsonNode data)
     {
         var key = store.GetSecret("brevoKey");

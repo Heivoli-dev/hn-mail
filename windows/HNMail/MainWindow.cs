@@ -156,8 +156,9 @@ public sealed class MainWindow : Window
         {
             messages = await services.FetchInboxAsync();
             var seen = store.Seen();
+            await PushPendingRepliedAsync();
             var replied = store.Replied;
-            var fresh = messages.Where(m => m?["id"]?.GetValue<string>() is string id && !seen.Contains(id) && !replied.ContainsKey(id)).ToList();
+            var fresh = messages.Where(m => m?["id"]?.GetValue<string>() is string id && !seen.Contains(id) && !replied.ContainsKey(id) && m?["repliedAt"] is null).ToList();
             // Pas de notification au tout premier chargement (sinon tous les anciens mails sonneraient).
             if (seen.Count > 0 && store.Notifications) Notify(fresh);
             seen.UnionWith(messages.Select(m => m?["id"]?.GetValue<string>() ?? "").Where(s => s.Length > 0));
@@ -172,10 +173,56 @@ public sealed class MainWindow : Window
         return messages;
     }
 
+    /// <summary>Envoie au serveur les « répondus » faits ici avant la synchro, puis oublie ceux déjà partagés.</summary>
+    private async Task PushPendingRepliedAsync()
+    {
+        var replied = store.Replied;
+        foreach (var m in messages)
+        {
+            var id = m?["id"]?.GetValue<string>() ?? "";
+            if (id.Length == 0 || !replied.ContainsKey(id)) continue;
+            if (m?["repliedAt"] is null)
+            {
+                try
+                {
+                    await services.SetRepliedAsync(id, true, store.TeamName);
+                    m!["repliedAt"] = DateTimeOffset.UtcNow.ToString("o");
+                    m["repliedBy"] = store.TeamName;
+                }
+                catch { continue; }
+            }
+            store.SetReplied(id, false);
+        }
+    }
+
+    private void SetMessageReplied(string id, bool value)
+    {
+        var m = messages.FirstOrDefault(x => x?["id"]?.GetValue<string>() == id);
+        if (m is null) return;
+        m["repliedAt"] = value ? DateTimeOffset.UtcNow.ToString("o") : null;
+        m["repliedBy"] = value ? store.TeamName : null;
+    }
+
+    private async Task MarkRepliedAsync(string id, bool value)
+    {
+        SetMessageReplied(id, value);
+        store.SetReplied(id, value); // en attente si le serveur ne répond pas
+        try
+        {
+            await services.SetRepliedAsync(id, value, store.TeamName);
+            store.SetReplied(id, false);
+        }
+        catch (Exception error)
+        {
+            Post(new JsonObject { ["event"] = "error", ["message"] = $"État « répondu » pas encore synchronisé : {error.Message}" });
+        }
+        UpdateTray();
+    }
+
     private void UpdateTray()
     {
         var replied = store.Replied;
-        var todo = messages.Count(m => m?["mailbox"]?.GetValue<string>() != "news" && !replied.ContainsKey(m?["id"]?.GetValue<string>() ?? ""));
+        var todo = messages.Count(m => m?["mailbox"]?.GetValue<string>() != "news" && m?["repliedAt"] is null && !replied.ContainsKey(m?["id"]?.GetValue<string>() ?? ""));
         tray.Text = todo > 0 ? $"HN Mail : {todo} à traiter" : "HN Mail";
     }
 
@@ -246,13 +293,11 @@ public sealed class MainWindow : Window
                 case "send":
                     if (data is null) throw new AppException("Rien à envoyer.");
                     await services.SendAsync(data);
-                    if (Str("messageId").Length > 0) store.SetReplied(Str("messageId"), true);
-                    UpdateTray();
+                    if (Str("messageId").Length > 0) await MarkRepliedAsync(Str("messageId"), true);
                     result = State();
                     break;
                 case "setReplied":
-                    store.SetReplied(Str("messageId"), data?["value"]?.GetValue<bool>() ?? true);
-                    UpdateTray();
+                    await MarkRepliedAsync(Str("messageId"), data?["value"]?.GetValue<bool>() ?? true);
                     result = State();
                     break;
                 case "saveTemplates":
@@ -261,6 +306,7 @@ public sealed class MainWindow : Window
                 case "setPrefs":
                     if (data?["pollMinutes"] is JsonNode minutes) { store.PollMinutes = minutes.GetValue<int>(); poller.Interval = TimeSpan.FromMinutes(store.PollMinutes); }
                     if (data?["notifications"] is JsonNode notif) store.Notifications = notif.GetValue<bool>();
+                    if (data?["teamName"] is JsonNode team) store.TeamName = team.GetValue<string>();
                     result = State();
                     break;
                 case "openExternal":
@@ -281,6 +327,7 @@ public sealed class MainWindow : Window
         ["brevoConfigured"] = store.BrevoConfigured,
         ["pollMinutes"] = store.PollMinutes,
         ["notifications"] = store.Notifications,
+        ["teamName"] = store.TeamName,
         ["replied"] = store.Replied.DeepClone(),
         ["templates"] = store.Templates?.DeepClone(),
         ["messages"] = messages.DeepClone(),
