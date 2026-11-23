@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AppKit
 
 /// État de l'app : mails, réponses prêtes, mails déjà répondus.
 @MainActor
@@ -18,6 +19,10 @@ final class MailStore: ObservableObject {
     let brevo = BrevoAPI()
 
     private let repliedKey = "repliedMessages"
+    private let seenKey = "seenMessages"
+    private var seen: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "seenMessages") ?? [])
+    private var poller: Task<Void, Never>?
+    private var started = false
     private var templatesURL: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("HN Mail", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -72,8 +77,14 @@ final class MailStore: ObservableObject {
             async let contact = api.fetch(mailbox: .contact)
             async let news = api.fetch(mailbox: .news, limit: 30)
             let all = try await contact + news
-            var seen = Set<String>()
-            messages = all.filter { seen.insert($0.id).inserted }.sorted { $0.date > $1.date }
+            var unique = Set<String>()
+            messages = all.filter { unique.insert($0.id).inserted }.sorted { $0.date > $1.date }
+            // Notifie seulement les mails jamais vus (pas au tout premier chargement).
+            let fresh = messages.filter { !seen.contains($0.id) && replied[$0.id] == nil }
+            if !seen.isEmpty { Notifier.shared.notify(fresh) }
+            seen.formUnion(messages.map(\.id))
+            UserDefaults.standard.set(Array(seen.suffix(2000)), forKey: seenKey)
+            updateBadge()
             error = nil
             if selectedID == nil || selected == nil { selectedID = visible.first?.id }
         } catch {
@@ -84,6 +95,33 @@ final class MailStore: ObservableObject {
     func markReplied(_ message: MailMessage, _ value: Bool = true) {
         replied[message.id] = value ? Date() : nil
         UserDefaults.standard.set(replied.mapValues { $0.timeIntervalSince1970 }, forKey: repliedKey)
+        updateBadge()
+    }
+
+    /// Premier lancement : charge les mails puis vérifie régulièrement les nouveaux.
+    func start() async {
+        guard !started else { return }
+        started = true
+        Notifier.shared.onOpen = { [weak self] id in
+            guard let self else { return }
+            self.folder = self.replied[id] == nil ? (self.messages.first { $0.id == id }?.mailbox == .news ? .news : .todo) : .replied
+            self.search = ""
+            self.selectedID = id
+        }
+        await refresh()
+        poller = Task { [weak self] in
+            while !Task.isCancelled {
+                let minutes = max(1, UserDefaults.standard.integer(forKey: "pollMinutes") == 0 ? 2 : UserDefaults.standard.integer(forKey: "pollMinutes"))
+                try? await Task.sleep(nanoseconds: UInt64(minutes) * 60 * 1_000_000_000)
+                guard let self else { return }
+                if self.auth.isConnected { await self.refresh() }
+            }
+        }
+    }
+
+    func updateBadge() {
+        let count = count(.todo)
+        NSApplication.shared.dockTile.badgeLabel = count > 0 ? String(count) : nil
     }
 
     func connectGoogle() async {

@@ -498,6 +498,7 @@ struct SettingsView: View {
     @State private var brevoKey = ""
     @State private var brevoSaved = Keychain.get("brevoApiKey") != nil
     @State private var working = false
+    @AppStorage("pollMinutes") private var pollMinutes = 2
 
     var body: some View {
         Form {
@@ -551,11 +552,56 @@ struct SettingsView: View {
                 Text("Crée une clé dédiée à HN Mail sur app.brevo.com › SMTP & API › Clés API.")
             }
 
+            Section {
+                Toggle("Notifier les nouveaux mails", isOn: Binding(get: { Notifier.shared.enabled }, set: { Notifier.shared.enabled = $0 }))
+                Picker("Vérifier les mails", selection: $pollMinutes) {
+                    Text("Toutes les minutes").tag(1)
+                    Text("Toutes les 2 minutes").tag(2)
+                    Text("Toutes les 5 minutes").tag(5)
+                    Text("Toutes les 15 minutes").tag(15)
+                }
+            } header: {
+                Text("Notifications")
+            } footer: {
+                Text("Les notifications s'affichent comme celles de Discord. HN Mail reste dans la barre des menus quand tu fermes la fenêtre. Pour les autoriser : Réglages Système › Notifications › HN Mail.")
+            }
+
             if let error = store.error {
                 Section { Text(error).foregroundStyle(.red) }
             }
         }
         .formStyle(.grouped)
         .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Barre des menus
+
+struct MenuBarContent: View {
+    @EnvironmentObject var store: MailStore
+
+    var body: some View {
+        let todo = store.messages.filter { $0.mailbox == .contact && !store.isReplied($0) }
+        Text(todo.isEmpty ? "Aucun mail à traiter" : "\(todo.count) mail\(todo.count > 1 ? "s" : "") à traiter")
+        Divider()
+        ForEach(todo.prefix(6)) { message in
+            Button("\(message.fromName.isEmpty ? message.fromEmail : message.fromName) — \(message.subject)") { open(message.id) }
+        }
+        if !todo.isEmpty { Divider() }
+        Button("Ouvrir HN Mail") { open(nil) }
+        Button("Actualiser") { Task { await store.refresh() } }
+        Button("Réglages…") { openSettingsWindow() }
+        Divider()
+        Button("Quitter HN Mail") { NSApp.terminate(nil) }
+    }
+
+    private func open(_ id: String?) {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+        if let id {
+            store.folder = .todo
+            store.search = ""
+            store.selectedID = id
+        }
     }
 }

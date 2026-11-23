@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct HNMailApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = MailStore()
     @State private var showNewMail = false
 
@@ -15,7 +16,7 @@ struct HNMailApp: App {
             ContentView(showNewMail: $showNewMail)
                 .environmentObject(store)
                 .frame(minWidth: 1100, minHeight: 680)
-                .task { await store.refresh() }
+                .task { await store.start() }
                 .onAppear { NSApplication.shared.activate(ignoringOtherApps: true) }
         }
         .commands {
@@ -29,6 +30,12 @@ struct HNMailApp: App {
 
         Settings {
             SettingsView().environmentObject(store).frame(width: 560)
+        }
+
+        MenuBarExtra {
+            MenuBarContent().environmentObject(store)
+        } label: {
+            Image(systemName: store.count(.todo) > 0 ? "envelope.badge.fill" : "envelope")
         }
     }
 }
