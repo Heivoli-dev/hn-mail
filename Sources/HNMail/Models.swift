@@ -13,6 +13,7 @@ struct MailMessage: Identifiable, Hashable {
     let body: String
     let messageIdHeader: String
     let mailbox: Mailbox
+    var attachments: [String] = []
 
     var firstName: String {
         let source = fromName.isEmpty ? fromEmail.components(separatedBy: "@").first ?? "" : fromName

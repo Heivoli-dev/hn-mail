@@ -13,9 +13,8 @@ final class MailStore: ObservableObject {
     @Published var error: String?
     @Published var templates: [ReplyTemplate] = []
     @Published private(set) var replied: [String: Date] = [:]
-    @Published var googleEmail: String = UserDefaults.standard.string(forKey: "googleEmail") ?? ""
+    @Published var inboxConfigured = InboxAPI.isConfigured
 
-    let auth = GoogleAuth()
     let brevo = BrevoAPI()
 
     private let repliedKey = "repliedMessages"
@@ -40,7 +39,7 @@ final class MailStore: ObservableObject {
         }
     }
 
-    var isReady: Bool { auth.isConnected && brevo.apiKey != nil }
+    var isReady: Bool { inboxConfigured && brevo.apiKey != nil }
 
     var visible: [MailMessage] {
         let base: [MailMessage]
@@ -69,14 +68,12 @@ final class MailStore: ObservableObject {
     func isReplied(_ message: MailMessage) -> Bool { replied[message.id] != nil }
 
     func refresh() async {
-        guard auth.isConnected else { error = "Connecte ton compte Gmail dans les Réglages (⌘,)."; return }
+        inboxConfigured = InboxAPI.isConfigured
+        guard inboxConfigured else { error = "Ajoute la clé HN Mail dans les Réglages (⌘,)."; return }
         loading = true
         defer { loading = false }
         do {
-            let api = GmailAPI(auth: auth)
-            async let contact = api.fetch(mailbox: .contact)
-            async let news = api.fetch(mailbox: .news, limit: 30)
-            let all = try await contact + news
+            let all = try await InboxAPI().fetch()
             var unique = Set<String>()
             messages = all.filter { unique.insert($0.id).inserted }.sorted { $0.date > $1.date }
             // Notifie seulement les mails jamais vus (pas au tout premier chargement).
@@ -114,7 +111,7 @@ final class MailStore: ObservableObject {
                 let minutes = max(1, UserDefaults.standard.integer(forKey: "pollMinutes") == 0 ? 2 : UserDefaults.standard.integer(forKey: "pollMinutes"))
                 try? await Task.sleep(nanoseconds: UInt64(minutes) * 60 * 1_000_000_000)
                 guard let self else { return }
-                if self.auth.isConnected { await self.refresh() }
+                if self.inboxConfigured { await self.refresh() }
             }
         }
     }
@@ -124,19 +121,10 @@ final class MailStore: ObservableObject {
         NSApplication.shared.dockTile.badgeLabel = count > 0 ? String(count) : nil
     }
 
-    func connectGoogle() async {
-        do {
-            googleEmail = try await auth.signIn()
-            await refresh()
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    func disconnectGoogle() {
-        auth.signOut()
-        googleEmail = ""
-        messages = []
+    func saveInboxKey(_ key: String) async {
+        Keychain.set("hnMailKey", key.trimmingCharacters(in: .whitespacesAndNewlines))
+        inboxConfigured = InboxAPI.isConfigured
+        await refresh()
     }
 
     func saveTemplates() {

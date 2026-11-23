@@ -4,7 +4,8 @@
 
 L'app Mac de Heivoli Network pour répondre aux mails reçus sur **contact@heivoli-network.fr** (et news@) avec des réponses toutes prêtes au style officiel.
 
-- Liste des mails reçus (lus dans Gmail, en lecture seule) : À traiter, Répondus, Tous, newsletter
+- Liste des mails reçus sur contact@ et news@ : À traiter, Répondus, Tous, newsletter
+- Notifications macOS, badge du Dock et icône dans la barre des menus
 - Étiquette automatique : support logiciel, partenariat, données, remerciement, contestation
 - 6 réponses prêtes modifiables, aperçu en direct (ordinateur / téléphone)
 - Envoi par Brevo depuis contact@ ou news@, dans la même conversation
@@ -16,20 +17,17 @@ Premier lancement : clic droit sur l'app › **Ouvrir** (l'app n'est pas signée
 
 ## Configurer (une seule fois)
 
-### 1. Accès Gmail (console Google)
+Les mails reçus sur contact@ et news@ sont gardés par le Worker de heivoli-network.fr (90 jours) ; l'app les lit avec une clé privée.
 
-Dans la [console Google Cloud](https://console.cloud.google.com/), projet **heivoli-network-408f3** :
-
-1. **API et services › Bibliothèque** : active **Gmail API**.
-2. **API et services › Écran de consentement OAuth** : type **Externe**, nom « HN Mail », ton adresse en contact.
-   Ajoute le champ d'application `gmail.readonly`, et ajoute ton adresse Gmail dans **Utilisateurs test**.
-   Puis **Publier l'application** (sinon la connexion expire au bout de 7 jours ; Google affichera « application non validée » : clique sur *Paramètres avancés › Accéder à HN Mail*).
-3. **API et services › Identifiants › Créer des identifiants › ID client OAuth** : type **Application de bureau**, nom « HN Mail ».
-4. Dans HN Mail › **Réglages** (⌘,), colle l'**ID client** et le **code secret**, puis **Connecter Gmail**.
-
-### 2. Clé Brevo
-
-Sur [app.brevo.com › SMTP & API › Clés API](https://app.brevo.com/settings/keys/api), crée une clé « hn-mail » et colle-la dans les Réglages. Elle est rangée dans le trousseau du Mac.
+1. Dans HN Mail › **Réglages** : **Créer une nouvelle clé**, puis **Copier**.
+2. Dans le Terminal :
+   ```
+   cd ~/Desktop/HNfr/discord-worker
+   npx wrangler secret put HN_MAIL_TOKEN
+   ```
+   et colle la clé.
+3. Dans l'app : **Enregistrer**. Les mails s'affichent.
+4. Ajoute ta clé **Brevo** (app.brevo.com › SMTP & API › Clés API) pour pouvoir répondre.
 
 ## Compiler
 

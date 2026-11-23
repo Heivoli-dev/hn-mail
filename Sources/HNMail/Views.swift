@@ -79,7 +79,7 @@ struct SidebarView: View {
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 8) {
                 Circle().fill(store.isReady ? Color.green : Color.orange).frame(width: 8, height: 8)
-                Text(store.googleEmail.isEmpty ? "Gmail non connecté" : store.googleEmail)
+                Text(store.inboxConfigured ? "Boîte contact@ connectée" : "Clé HN Mail manquante")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             .padding(10)
@@ -175,6 +175,10 @@ struct ReplyView: View {
                         }
                     }
                     Text(message.body).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    if !message.attachments.isEmpty {
+                        Label("Pièces jointes : \(message.attachments.joined(separator: ", ")) (visibles dans ton Gmail)", systemImage: "paperclip")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 .padding(20)
             }
@@ -508,39 +512,48 @@ struct TemplateEditor: View {
 
 struct SettingsView: View {
     @EnvironmentObject var store: MailStore
-    @AppStorage("googleClientID") private var clientID = ""
-    @State private var clientSecret = Keychain.get("googleClientSecret") ?? ""
     @State private var brevoKey = ""
     @State private var brevoSaved = Keychain.get("brevoApiKey") != nil
-    @State private var working = false
+    @State private var inboxKey = ""
+    @State private var editingKey = false
+    @State private var showKey = false
     @AppStorage("pollMinutes") private var pollMinutes = 2
 
     var body: some View {
         Form {
             Section {
-                TextField("Identifiant du client (…apps.googleusercontent.com)", text: $clientID)
-                SecureField("Code secret du client", text: $clientSecret)
-                    .onChange(of: clientSecret) { value in Keychain.set("googleClientSecret", value.trimmingCharacters(in: .whitespaces)) }
-                HStack {
-                    if store.auth.isConnected {
-                        Label(store.googleEmail.isEmpty ? "Connecté" : "Connecté : \(store.googleEmail)", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+                if store.inboxConfigured && !editingKey {
+                    HStack {
+                        Label("Clé HN Mail enregistrée", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
                         Spacer()
-                        Button("Déconnecter") { store.disconnectGoogle() }
-                    } else {
-                        Text("Pas encore connecté").foregroundStyle(.secondary)
-                        Spacer()
-                        Button(working ? "Connexion…" : "Connecter Gmail") {
-                            working = true
-                            Task { await store.connectGoogle(); working = false }
+                        Button("Changer") { editingKey = true; inboxKey = "" }
+                    }
+                } else {
+                    HStack {
+                        SecureField("Colle ta clé HN Mail", text: $inboxKey)
+                        Button("Enregistrer") {
+                            let key = inboxKey
+                            Task { await store.saveInboxKey(key); editingKey = false; inboxKey = "" }
                         }
-                        .disabled(working || clientID.isEmpty || clientSecret.isEmpty)
-                        .buttonStyle(.borderedProminent).tint(brandColor)
+                        .disabled(inboxKey.trimmingCharacters(in: .whitespaces).count < 24)
+                    }
+                    HStack {
+                        Button("Créer une nouvelle clé") { inboxKey = InboxAPI.generateKey(); showKey = true }
+                        if showKey && !inboxKey.isEmpty {
+                            Button("Copier") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(inboxKey, forType: .string)
+                            }
+                        }
+                    }
+                    if showKey && !inboxKey.isEmpty {
+                        Text(inboxKey).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                     }
                 }
             } header: {
-                Text("Gmail (lecture des mails reçus)")
+                Text("Boîte de réception (contact@ et news@)")
             } footer: {
-                Text("L'app lit uniquement les mails envoyés à contact@ et news@ dans ta boîte Gmail. Elle ne peut ni supprimer ni modifier tes mails.")
+                Text("Clique sur « Créer une nouvelle clé », copie-la, puis installe-la sur le serveur dans le Terminal : cd ~/Desktop/HNfr/discord-worker puis npx wrangler secret put HN_MAIL_TOKEN (colle la clé). Reviens ici et clique sur Enregistrer.")
             }
 
             Section {
