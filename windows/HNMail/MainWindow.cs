@@ -4,7 +4,7 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Threading;
-using CommunityToolkit.WinUI.Notifications;
+using Microsoft.Toolkit.Uwp.Notifications;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using Forms = System.Windows.Forms;
