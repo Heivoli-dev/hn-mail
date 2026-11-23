@@ -26,6 +26,9 @@ struct HNMailApp: App {
             CommandGroup(after: .newItem) {
                 Button("Actualiser") { Task { await store.refresh() } }.keyboardShortcut("r")
             }
+            CommandGroup(replacing: .appSettings) {
+                Button("Réglages…") { openSettingsWindow() }.keyboardShortcut(",")
+            }
         }
 
         Settings {
@@ -40,13 +43,14 @@ struct HNMailApp: App {
     }
 }
 
-/// Ouvre la fenêtre Réglages (compatible macOS 13 et 14+).
+/// Ouvre les Réglages dans la fenêtre principale (fonctionne sur toutes les versions de macOS).
+extension Notification.Name {
+    static let openSettings = Notification.Name("HNMailOpenSettings")
+}
+
 @MainActor
 func openSettingsWindow() {
     NSApp.activate(ignoringOtherApps: true)
-    if #available(macOS 14, *) {
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-    } else {
-        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-    }
+    NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+    NotificationCenter.default.post(name: .openSettings, object: nil)
 }

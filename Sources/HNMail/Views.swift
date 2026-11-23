@@ -10,6 +10,7 @@ struct ContentView: View {
     @EnvironmentObject var store: MailStore
     @Binding var showNewMail: Bool
     @State private var showTemplates = false
+    @State private var showSettings = false
 
     var body: some View {
         NavigationSplitView {
@@ -35,6 +36,20 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showNewMail) { NewMailView().environmentObject(store) }
         .sheet(isPresented: $showTemplates) { TemplateManagerView().environmentObject(store) }
+        .sheet(isPresented: $showSettings) {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Réglages").font(.title2.bold())
+                    Spacer()
+                    Button("Terminé") { showSettings = false }.keyboardShortcut(.defaultAction)
+                }
+                .padding(16)
+                Divider()
+                ScrollView { SettingsView().environmentObject(store) }
+            }
+            .frame(width: 600, height: 640)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in showSettings = true }
         .onChange(of: store.folder) { _ in store.selectedID = store.visible.first?.id }
     }
 }
