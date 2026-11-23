@@ -64,7 +64,7 @@ final class GoogleAuth {
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "access_type", value: "offline"),
-            URLQueryItem(name: "prompt", value: "consent"),
+            URLQueryItem(name: "prompt", value: "select_account consent"),
             URLQueryItem(name: "state", value: state),
         ]
         NSWorkspace.shared.open(components.url!)

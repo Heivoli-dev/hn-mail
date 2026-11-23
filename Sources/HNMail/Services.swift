@@ -32,8 +32,13 @@ struct GmailAPI {
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200, let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            if status == 403 { throw AppError.message("Gmail refuse l'accès : active l'API Gmail dans la console Google.") }
-            throw AppError.message("Gmail ne répond pas (\(status)).")
+            let detail = ((try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? [String: Any])?["message"] as? String ?? ""
+            if status == 400 && (detail.contains("Mail service not enabled") || detail.contains("Precondition")) {
+                throw AppError.message("Ce compte Google n'a pas de boîte Gmail. Déconnecte-toi dans les Réglages et reconnecte-toi avec heivolipro@gmail.com.")
+            }
+            if status == 403 { throw AppError.message("Gmail refuse l'accès : active l'API Gmail dans la console Google (\(detail)).") }
+            if status == 401 { throw AppError.message("La connexion Gmail a expiré. Reconnecte-toi dans les Réglages.") }
+            throw AppError.message("Gmail ne répond pas (\(status))\(detail.isEmpty ? "" : " : \(detail)").")
         }
         return json
     }
