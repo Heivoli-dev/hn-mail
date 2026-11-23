@@ -1,0 +1,53 @@
+# Compile HN Mail (Apple Silicon + Intel), fabrique le .dmg et le publie en Release.
+name: Build HN Mail
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compilation
+        run: swift build -c release --arch arm64 --arch x86_64
+
+      - name: Application
+        run: |
+          VERSION=$(cat VERSION)
+          BIN=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
+          APP="dist/HN Mail.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp "$BIN/HNMail" "$APP/Contents/MacOS/HNMail"
+          sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/${{ github.run_number }}/" packaging/Info.plist > "$APP/Contents/Info.plist"
+          printf 'APPL????' > "$APP/Contents/PkgInfo"
+          ICONSET=dist/AppIcon.iconset
+          mkdir -p "$ICONSET"
+          for s in 16 32 128 256 512; do
+            sips -z $s $s packaging/icon-1024.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+            d=$((s*2)); sips -z $d $d packaging/icon-1024.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+          done
+          iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+          codesign --force --deep --sign - "$APP"
+          mkdir -p dist/dmg && cp -R "$APP" dist/dmg/ && ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname "HN Mail" -srcfolder dist/dmg -ov -format UDZO "dist/HN-Mail.dmg"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HN-Mail
+          path: dist/HN-Mail.dmg
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${VERSION}-build${{ github.run_number }}"
+          gh release create "$TAG" dist/HN-Mail.dmg --title "HN Mail ${VERSION} (build ${{ github.run_number }})" \
+            --notes "Glisse HN Mail dans Applications. Premier lancement : clic droit sur l'app › Ouvrir." --latest
