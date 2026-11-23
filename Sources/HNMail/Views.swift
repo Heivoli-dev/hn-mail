@@ -45,7 +45,7 @@ struct ContentView: View {
                 }
                 .padding(16)
                 Divider()
-                ScrollView { SettingsView().environmentObject(store) }
+                SettingsView().environmentObject(store).frame(maxHeight: .infinity)
             }
             .frame(width: 600, height: 640)
         }
