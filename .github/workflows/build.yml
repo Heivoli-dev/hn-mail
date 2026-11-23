@@ -1,4 +1,4 @@
-# Compile HN Mail (Apple Silicon + Intel), fabrique le .dmg et le publie en Release.
+# Compile HN Mail pour Mac (Apple Silicon + Intel) et Windows, puis publie les deux dans une Release.
 name: Build HN Mail
 
 on:
@@ -10,14 +10,12 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  mac:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Compilation
         run: swift build -c release --arch arm64 --arch x86_64
-
       - name: Application
         run: |
           VERSION=$(cat VERSION)
@@ -37,17 +35,47 @@ jobs:
           codesign --force --deep --sign - "$APP"
           mkdir -p dist/dmg && cp -R "$APP" dist/dmg/ && ln -s /Applications dist/dmg/Applications
           hdiutil create -volname "HN Mail" -srcfolder dist/dmg -ov -format UDZO "dist/HN-Mail.dmg"
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-
       - uses: actions/upload-artifact@v4
         with:
-          name: HN-Mail
+          name: mac
           path: dist/HN-Mail.dmg
 
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Compilation
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION).Trim()
+          dotnet publish windows/HNMail/HNMail.csproj -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
+            -p:Version=$version -p:FileVersion="$version.${{ github.run_number }}" -o out
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "out/HN Mail.exe" "dist/HN-Mail-Windows.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/HN-Mail-Windows.exe
+
+  release:
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          VERSION=$(cat VERSION)
           TAG="v${VERSION}-build${{ github.run_number }}"
-          gh release create "$TAG" dist/HN-Mail.dmg --title "HN Mail ${VERSION} (build ${{ github.run_number }})" \
-            --notes "Glisse HN Mail dans Applications. Premier lancement : clic droit sur l'app › Ouvrir." --latest
+          gh release create "$TAG" dist/mac/HN-Mail.dmg dist/windows/HN-Mail-Windows.exe \
+            --title "HN Mail ${VERSION} (build ${{ github.run_number }})" --latest \
+            --notes "Mac : ouvre HN-Mail.dmg et glisse HN Mail dans Applications (premier lancement : clic droit › Ouvrir).
+          Windows : lance HN-Mail-Windows.exe (si Windows affiche « PC protégé » : Informations complémentaires › Exécuter quand même)."

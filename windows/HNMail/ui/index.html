@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; frame-src 'self' about:; script-src 'self'">
+<title>HN Mail</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="title"><img src="logo.png" alt=""> HN Mail</div>
+    <input id="search" class="search" type="search" placeholder="🔍 Rechercher un mail">
+    <button id="refresh" class="tbtn" title="Actualiser (Ctrl+R)">↻ Actualiser</button>
+    <button id="new" class="tbtn" title="Nouveau mail (Ctrl+N)">✎ Nouveau</button>
+  </header>
+  <div class="body">
+    <nav class="side">
+      <h4>contact@</h4>
+      <a href="#" data-folder="todo" class="on">📥 À traiter <small data-count="todo"></small></a>
+      <a href="#" data-folder="replied">✅ Répondus <small data-count="replied"></small></a>
+      <a href="#" data-folder="all">📦 Tous les mails <small data-count="all"></small></a>
+      <h4>news@</h4>
+      <a href="#" data-folder="news">📰 Réponses à la newsletter <small data-count="news"></small></a>
+      <h4>Réponses prêtes</h4>
+      <a href="#" id="open-templates">🧩 Gérer les templates</a>
+      <a href="#" id="open-settings">⚙ Réglages</a>
+      <div class="status"><i id="status-dot"></i><span id="status-text"></span></div>
+    </nav>
+    <section class="list" id="list"></section>
+    <section class="main" id="main"></section>
+  </div>
+</div>
+
+<div class="modal" id="settings" hidden>
+  <div class="panel">
+    <div class="phead"><h2>Réglages</h2><button class="primary" data-close>Terminé</button></div>
+    <div class="pbody">
+      <section class="group">
+        <h3>Boîte de réception (contact@ et news@)</h3>
+        <div id="inbox-saved" class="saved" hidden>✔ Clé HN Mail enregistrée <button id="inbox-change">Changer</button></div>
+        <div id="inbox-edit">
+          <div class="row"><input id="inbox-key" type="password" placeholder="Colle ta clé HN Mail"><button id="inbox-save">Enregistrer</button></div>
+          <div class="row"><button id="inbox-generate">Créer une nouvelle clé</button><button id="inbox-copy" hidden>Copier</button></div>
+          <code id="inbox-shown" hidden></code>
+        </div>
+        <p class="help">Utilise la même clé que l'app Mac (demande-la à l'équipe), ou crée une nouvelle clé puis installe-la sur le serveur : <code>npx wrangler secret put HN_MAIL_TOKEN</code>.</p>
+      </section>
+      <section class="group">
+        <h3>Brevo (envoi des réponses)</h3>
+        <div id="brevo-saved" class="saved" hidden>✔ Clé Brevo enregistrée <button id="brevo-change">Remplacer</button></div>
+        <div id="brevo-edit" class="row"><input id="brevo-key" type="password" placeholder="xkeysib-…"><button id="brevo-save">Enregistrer</button></div>
+        <p class="help">Crée une clé dédiée sur app.brevo.com › SMTP &amp; API › Clés API. Les clés sont chiffrées pour ta session Windows.</p>
+      </section>
+      <section class="group">
+        <h3>Notifications</h3>
+        <label class="check"><input id="notif" type="checkbox"> Notifier les nouveaux mails</label>
+        <label class="inline">Vérifier les mails
+          <select id="poll"><option value="1">Toutes les minutes</option><option value="2">Toutes les 2 minutes</option><option value="5">Toutes les 5 minutes</option><option value="15">Toutes les 15 minutes</option></select>
+        </label>
+        <p class="help">Les notifications s'affichent en bas à droite comme celles de Discord. HN Mail reste près de l'horloge quand tu fermes la fenêtre (clic droit › Quitter).</p>
+      </section>
+      <p id="settings-error" class="error"></p>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="templates" hidden>
+  <div class="panel wide">
+    <div class="phead"><h2>Réponses prêtes</h2>
+      <div><button id="tpl-add">Ajouter</button> <button id="tpl-reset">Rétablir les modèles d'origine</button> <button class="primary" data-close>Terminé</button></div></div>
+    <div class="tplwrap"><ul id="tpl-list"></ul><div id="tpl-editor" class="pbody"></div></div>
+  </div>
+</div>
+
+<div class="modal" id="newmail" hidden>
+  <div class="panel wide tall">
+    <div class="phead"><h2>Nouveau mail</h2><button data-close>Fermer</button></div>
+    <div id="newmail-body" class="compose-host"></div>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
