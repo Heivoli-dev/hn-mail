@@ -14,8 +14,9 @@ namespace HNMail;
 public static class Program
 {
     [STAThread]
-    public static void Main()
+    public static void Main(string[] args)
     {
+        Updater.FinishPreviousUpdate(args);
         using var mutex = new Mutex(true, "HNMail-single-instance", out var first);
         if (!first)
         {
@@ -37,6 +38,8 @@ public sealed class MainWindow : Window
     private readonly Store store = new();
     private readonly Services services;
     private readonly DispatcherTimer poller = new();
+    private readonly DispatcherTimer updateTimer = new() { Interval = TimeSpan.FromHours(6) };
+    private readonly Updater updater = new();
     private readonly Forms.NotifyIcon tray = new();
     private JsonArray messages = new();
     private bool quitting;
@@ -84,6 +87,33 @@ public sealed class MainWindow : Window
         poller.Tick += async (_, _) => await RefreshAsync(false);
         poller.Interval = TimeSpan.FromMinutes(store.PollMinutes);
         poller.Start();
+
+        updateTimer.Tick += async (_, _) => await CheckUpdateAsync(true);
+        updateTimer.Start();
+        _ = FirstUpdateCheckAsync();
+    }
+
+    private async Task FirstUpdateCheckAsync()
+    {
+        await Task.Delay(TimeSpan.FromSeconds(5));
+        await CheckUpdateAsync(true);
+    }
+
+    // ---------- mise à jour par Internet ----------
+    private async Task CheckUpdateAsync(bool automatic)
+    {
+        if (automatic && !store.AutoUpdate) return;
+        try
+        {
+            await updater.CheckAsync();
+            Post(new JsonObject { ["event"] = "update", ["update"] = updater.ToJson() });
+            if (automatic && updater.Available && !IsVisible)
+                tray.ShowBalloonTip(5000, "Mise à jour de HN Mail", $"La version {updater.LatestVersion} est disponible. Ouvre HN Mail pour l'installer.", Forms.ToolTipIcon.Info);
+        }
+        catch (Exception error)
+        {
+            if (!automatic) throw new AppException(error.Message);
+        }
     }
 
     private static void ExtractUi(string folder)
@@ -307,8 +337,22 @@ public sealed class MainWindow : Window
                     if (data?["pollMinutes"] is JsonNode minutes) { store.PollMinutes = minutes.GetValue<int>(); poller.Interval = TimeSpan.FromMinutes(store.PollMinutes); }
                     if (data?["notifications"] is JsonNode notif) store.Notifications = notif.GetValue<bool>();
                     if (data?["teamName"] is JsonNode team) store.TeamName = team.GetValue<string>();
+                    if (data?["autoUpdate"] is JsonNode autoUpdate) store.AutoUpdate = autoUpdate.GetValue<bool>();
+                    if (data?["autoCorrect"] is JsonNode autoCorrect) store.AutoCorrect = autoCorrect.GetValue<bool>();
                     result = State();
                     break;
+                case "ai":
+                    result = await services.AiAsync(data);
+                    break;
+                case "checkUpdate":
+                    await CheckUpdateAsync(false);
+                    result = updater.ToJson();
+                    break;
+                case "installUpdate":
+                    await updater.InstallAsync();
+                    Post(new JsonObject { ["id"] = id, ["ok"] = true, ["data"] = null });
+                    Quit();
+                    return;
                 case "openExternal":
                     OpenExternal(Str("url"));
                     break;
@@ -328,6 +372,9 @@ public sealed class MainWindow : Window
         ["pollMinutes"] = store.PollMinutes,
         ["notifications"] = store.Notifications,
         ["teamName"] = store.TeamName,
+        ["autoUpdate"] = store.AutoUpdate,
+        ["autoCorrect"] = store.AutoCorrect,
+        ["update"] = updater.ToJson(),
         ["replied"] = store.Replied.DeepClone(),
         ["templates"] = store.Templates?.DeepClone(),
         ["messages"] = messages.DeepClone(),

@@ -12,7 +12,20 @@ struct ContentView: View {
     @State private var showTemplates = false
     @State private var showSettings = false
 
+    @ObservedObject private var updater = Updater.shared
+
     var body: some View {
+        VStack(spacing: 0) {
+            if updater.state == .available && !updater.dismissed, let release = updater.latest {
+                UpdateBanner(release: release)
+            } else if updater.state == .downloading || updater.state == .installing {
+                UpdateBanner(release: updater.latest)
+            }
+            mainSplit
+        }
+    }
+
+    private var mainSplit: some View {
         NavigationSplitView {
             SidebarView(showTemplates: $showTemplates)
                 .navigationSplitViewColumnWidth(min: 190, ideal: 210)
@@ -51,6 +64,36 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in showSettings = true }
         .onChange(of: store.folder) { _ in store.selectedID = store.visible.first?.id }
+    }
+}
+
+/// Bandeau « nouvelle version disponible ».
+struct UpdateBanner: View {
+    @ObservedObject private var updater = Updater.shared
+    let release: Updater.Release?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.down.circle.fill").foregroundStyle(brandColor)
+            if updater.state == .downloading {
+                ProgressView().controlSize(.small)
+                Text("Téléchargement de la mise à jour…")
+            } else if updater.state == .installing {
+                ProgressView().controlSize(.small)
+                Text("Installation… HN Mail va redémarrer.")
+            } else {
+                Text("HN Mail \(release?.version ?? "") est disponible").fontWeight(.semibold)
+                Text("(tu as la \(updater.currentVersion))").foregroundStyle(.secondary)
+                Spacer()
+                Button("Plus tard") { updater.dismissed = true }
+                Button("Installer et relancer") { Task { await updater.install() } }
+                    .buttonStyle(.borderedProminent).tint(brandColor)
+            }
+            if updater.state != .available { Spacer() }
+        }
+        .font(.callout)
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(brandColor.opacity(0.1))
     }
 }
 
@@ -201,8 +244,10 @@ struct Recipient {
     var inReplyTo: String?
     var mailbox: Mailbox
     var suggestedTemplate: String
+    var receivedBody = ""
 
     init(message: MailMessage) {
+        receivedBody = message.body
         email = message.fromEmail
         name = message.fromName
         firstName = message.firstName
@@ -238,6 +283,13 @@ struct ComposerView: View {
     @State private var status = ""
     @State private var statusIsError = false
     @State private var phonePreview = false
+    @State private var aiInstruction = ""
+    @State private var aiBusy = ""
+    @State private var aiStatus = ""
+    @State private var aiStatusIsError = false
+    @State private var textBeforeAI: String?
+    @State private var correctedForSend = ""
+    @AppStorage("autoCorrect") private var autoCorrect = true
 
     init(target: Recipient, editableRecipient: Bool = false, onSent: @escaping () -> Void) {
         _target = State(initialValue: target)
@@ -285,6 +337,7 @@ struct ComposerView: View {
                         TextEditor(text: $text).font(.body).frame(minHeight: 120)
                             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.3)))
                     }
+                    aiControls
                     LabeledField("Texte du bouton (vide = pas de bouton)") { TextField("Bouton", text: $buttonLabel) }
                     Button {
                         Task { await send() }
@@ -331,6 +384,74 @@ struct ComposerView: View {
         .onAppear { if templateID.isEmpty { apply(store.template(target.suggestedTemplate)) } }
     }
 
+    // MARK: IA
+
+    private var aiControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Consigne pour l'IA (facultatif) : ex. « refuse poliment »", text: $aiInstruction)
+                .textFieldStyle(.roundedBorder)
+            HStack(spacing: 8) {
+                Button { Task { await aiDraft() } } label: {
+                    HStack(spacing: 4) {
+                        if aiBusy == "draft" { ProgressView().controlSize(.small) }
+                        Text("✨ Proposer une réponse")
+                    }
+                }
+                .help("L'IA lit le mail reçu et écrit une réponse à partir du modèle choisi.")
+                Button { Task { await aiCorrect() } } label: {
+                    HStack(spacing: 4) {
+                        if aiBusy == "correct" { ProgressView().controlSize(.small) }
+                        Text("Corriger")
+                    }
+                }
+                .help("Corrige l'orthographe et la grammaire sans changer ton texte.")
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if textBeforeAI != nil {
+                    Button("Annuler") { if let old = textBeforeAI { text = old; textBeforeAI = nil; aiStatus = "" } }
+                        .help("Revenir au texte d'avant l'IA.")
+                }
+            }
+            .disabled(!aiBusy.isEmpty || sending)
+            if !aiStatus.isEmpty {
+                Text(aiStatus).font(.caption).foregroundStyle(aiStatusIsError ? Color.red : Color.secondary)
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(brandColor.opacity(0.06)))
+    }
+
+    private func aiDraft() async {
+        aiBusy = "draft"; aiStatus = "L'IA écrit…"; aiStatusIsError = false
+        defer { aiBusy = "" }
+        do {
+            let result = try await AIAPI().draft(mailFrom: target.name.isEmpty ? target.email : target.name, subject: target.originalSubject,
+                                                 body: target.receivedBody, template: template, current: text, instruction: aiInstruction)
+            textBeforeAI = text
+            text = result
+            aiStatus = "Réponse proposée par l'IA : relis-la avant d'envoyer."
+        } catch {
+            aiStatus = error.localizedDescription; aiStatusIsError = true
+        }
+    }
+
+    private func aiCorrect() async {
+        aiBusy = "correct"; aiStatus = "Correction…"; aiStatusIsError = false
+        defer { aiBusy = "" }
+        do {
+            let result = try await AIAPI().correct(text)
+            if result == text {
+                aiStatus = "Aucune faute trouvée ✓"
+            } else {
+                textBeforeAI = text
+                text = result
+                aiStatus = "Texte corrigé ✓"
+            }
+            correctedForSend = text
+        } catch {
+            aiStatus = error.localizedDescription; aiStatusIsError = true
+        }
+    }
+
     private func apply(_ item: ReplyTemplate) {
         templateID = item.id
         text = EmailRenderer.fill(item.message, firstName: target.firstName, subject: target.originalSubject)
@@ -344,6 +465,21 @@ struct ComposerView: View {
         let email = target.email.trimmingCharacters(in: .whitespaces)
         guard email.range(of: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", options: .regularExpression) != nil else {
             status = "Adresse du destinataire invalide."; statusIsError = true; return
+        }
+        // Correcteur auto : on corrige avant le premier envoi ; si l'IA change quelque chose, on montre le texte avant d'envoyer.
+        if autoCorrect && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && correctedForSend != text {
+            status = "Correction avant l'envoi…"; statusIsError = false
+            if let result = try? await AIAPI().correct(text) {
+                correctedForSend = result
+                if result != text {
+                    textBeforeAI = text
+                    text = result
+                    status = "J'ai corrigé quelques fautes : vérifie l'aperçu puis clique à nouveau sur Envoyer."
+                    statusIsError = false
+                    return
+                }
+            }
+            status = ""
         }
         do {
             try await store.brevo.send(from: target.mailbox, toEmail: email, toName: target.name, subject: target.subject, html: html, inReplyTo: target.inReplyTo)
@@ -520,6 +656,7 @@ struct SettingsView: View {
     @State private var showKey = false
     @AppStorage("pollMinutes") private var pollMinutes = 2
     @AppStorage("teamName") private var teamName = ""
+    @AppStorage("autoCorrect") private var autoCorrect = true
 
     var body: some View {
         Form {
@@ -604,6 +741,16 @@ struct SettingsView: View {
                 Text("Les notifications s'affichent comme celles de Discord. HN Mail reste dans la barre des menus quand tu fermes la fenêtre. Pour les autoriser : Réglages Système › Notifications › HN Mail.")
             }
 
+            Section {
+                Toggle("Corriger automatiquement avant chaque envoi", isOn: $autoCorrect)
+            } header: {
+                Text("IA")
+            } footer: {
+                Text("Dans la réponse : « ✨ Proposer une réponse » écrit un brouillon à partir du mail reçu et du modèle choisi, « Corriger » enlève les fautes. L'IA tourne sur le Worker (clé ANTHROPIC_API_KEY) : ses consignes se changent sans réinstaller l'app.")
+            }
+
+            UpdateSettingsSection()
+
             if let error = store.error {
                 Section { Text(error).foregroundStyle(.red) }
             }
@@ -613,10 +760,52 @@ struct SettingsView: View {
     }
 }
 
+struct UpdateSettingsSection: View {
+    @ObservedObject private var updater = Updater.shared
+
+    var body: some View {
+        Section {
+            HStack {
+                Text("Version installée : \(updater.currentVersion) (build \(updater.currentBuild))")
+                Spacer()
+                Button(updater.state == .checking ? "Vérification…" : "Rechercher une mise à jour") {
+                    Task { await updater.check(silent: false) }
+                }
+                .disabled(updater.busy)
+            }
+            switch updater.state {
+            case .upToDate:
+                Label("HN Mail est à jour.", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+            case .available:
+                HStack {
+                    Label("Version \(updater.latest?.version ?? "") disponible", systemImage: "arrow.down.circle.fill").foregroundStyle(brandColor)
+                    Spacer()
+                    Button("Installer et relancer") { Task { await updater.install() } }
+                        .buttonStyle(.borderedProminent).tint(brandColor)
+                }
+            case .downloading:
+                Label("Téléchargement…", systemImage: "arrow.down.circle")
+            case .installing:
+                Label("Installation… HN Mail va redémarrer.", systemImage: "gearshape.2")
+            case .failed(let message):
+                Text(message).foregroundStyle(.red)
+            default:
+                EmptyView()
+            }
+            Toggle("Rechercher les mises à jour automatiquement", isOn: Binding(get: { updater.autoCheck }, set: { updater.autoCheck = $0 }))
+        } header: {
+            Text("Mises à jour")
+        } footer: {
+            Text("HN Mail télécharge la dernière version publiée sur GitHub, vérifie le fichier, remplace l'app et redémarre.")
+        }
+    }
+}
+
 // MARK: - Barre des menus
 
 struct MenuBarContent: View {
     @EnvironmentObject var store: MailStore
+    @ObservedObject private var updater = Updater.shared
 
     var body: some View {
         let todo = store.messages.filter { $0.mailbox == .contact && !store.isReplied($0) }
@@ -626,6 +815,10 @@ struct MenuBarContent: View {
             Button("\(message.fromName.isEmpty ? message.fromEmail : message.fromName) — \(message.subject)") { open(message.id) }
         }
         if !todo.isEmpty { Divider() }
+        if updater.state == .available {
+            Button("Installer la mise à jour \(updater.latest?.version ?? "")…") { Task { await updater.install() } }
+            Divider()
+        }
         Button("Ouvrir HN Mail") { open(nil) }
         Button("Actualiser") { Task { await store.refresh() } }
         Button("Réglages…") { openSettingsWindow() }

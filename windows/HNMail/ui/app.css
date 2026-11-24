@@ -95,3 +95,11 @@ code { font-family: Consolas, monospace; background: #f3f2fb; padding: 2px 6px; 
 #tpl-editor label { display: grid; gap: 4px; font-weight: 600; font-size: 12px; }
 #tpl-editor textarea { min-height: 100px; }
 .rowkv { display: grid; grid-template-columns: 150px 1fr auto; gap: 6px; }
+/* Mise à jour + IA */
+.banner { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); z-index: 40; display: flex; align-items: center; gap: 16px; padding: 8px 10px 8px 16px; background: #fff; border: 1px solid #d9d5f7; border-radius: 10px; box-shadow: 0 10px 30px rgba(40,30,110,.18); font-size: 13px; }
+.banner[hidden] { display: none; }
+.ai { display: grid; gap: 6px; padding: 8px; border-radius: 8px; background: rgba(90,75,216,.06); }
+.ai-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.ai-row button[hidden] { display: none; }
+.ai-msg { font-size: 12px; color: #6e6e78; }
+.ai-msg.err { color: #c4271b; }

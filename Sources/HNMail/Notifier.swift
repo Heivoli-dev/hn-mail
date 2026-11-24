@@ -73,6 +73,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Notifier.shared.setup()
+        Task { @MainActor in await Updater.shared.startAutoCheck() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

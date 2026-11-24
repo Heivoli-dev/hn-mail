@@ -14,6 +14,7 @@
     <button id="refresh" class="tbtn" title="Actualiser (Ctrl+R)">↻ Actualiser</button>
     <button id="new" class="tbtn" title="Nouveau mail (Ctrl+N)">✎ Nouveau</button>
   </header>
+  <div class="banner" id="update-banner" hidden><span>⬇️ <strong id="update-banner-text"></strong></span><span><button id="update-later">Plus tard</button> <button class="primary update-install">Installer et relancer</button></span></div>
   <div class="body">
     <nav class="side">
       <h4>contact@</h4>
@@ -64,6 +65,18 @@
           <select id="poll"><option value="1">Toutes les minutes</option><option value="2">Toutes les 2 minutes</option><option value="5">Toutes les 5 minutes</option><option value="15">Toutes les 15 minutes</option></select>
         </label>
         <p class="help">Les notifications s'affichent en bas à droite comme celles de Discord. HN Mail reste près de l'horloge quand tu fermes la fenêtre (clic droit › Quitter).</p>
+      </section>
+      <section class="group">
+        <h3>IA</h3>
+        <label class="check"><input id="autocorrect" type="checkbox"> Corriger automatiquement avant chaque envoi</label>
+        <p class="help">Dans la réponse : « ✨ Proposer une réponse » écrit un brouillon à partir du mail reçu et du modèle choisi, « Corriger » enlève les fautes. L'IA tourne sur le Worker (clé ANTHROPIC_API_KEY) : ses consignes se changent sans réinstaller l'app.</p>
+      </section>
+      <section class="group">
+        <h3>Mises à jour</h3>
+        <div class="row"><span id="version"></span><button id="update-check">Rechercher une mise à jour</button><button id="update-install" class="primary update-install" hidden>Installer et relancer</button></div>
+        <p id="update-status" class="help"></p>
+        <label class="check"><input id="autoupdate" type="checkbox"> Rechercher les mises à jour automatiquement</label>
+        <p class="help">HN Mail télécharge la dernière version publiée sur GitHub, vérifie le fichier, remplace l'app et redémarre.</p>
       </section>
       <p id="settings-error" class="error"></p>
     </div>

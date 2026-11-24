@@ -112,3 +112,44 @@ struct BrevoAPI {
         }
     }
 }
+
+/// IA de HN Mail (sur le Worker) : propose une réponse ou corrige le texte.
+/// Les consignes de l'IA sont sur le serveur : on peut les changer sans réinstaller l'app.
+struct AIAPI {
+    static let url = InboxAPI.url.appendingPathComponent("ai")
+
+    func draft(mailFrom: String, subject: String, body: String, template: ReplyTemplate, current: String, instruction: String) async throws -> String {
+        try await call([
+            "action": "draft",
+            "mail": ["fromName": mailFrom, "subject": subject, "text": body],
+            "template": ["name": template.name, "title": template.title, "message": template.message],
+            "current": current,
+            "instruction": instruction,
+        ])
+    }
+
+    func correct(_ text: String) async throws -> String {
+        try await call(["action": "correct", "text": text])
+    }
+
+    private func call(_ payload: [String: Any]) async throws -> String {
+        guard let key = InboxAPI.key, InboxAPI.isConfigured else { throw AppError.message("Ajoute la clé HN Mail dans les Réglages.") }
+        var request = URLRequest(url: Self.url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 90
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        let data: Data
+        let response: URLResponse
+        do { (data, response) = try await URLSession.shared.data(for: request) }
+        catch { throw AppError.message("L'IA ne répond pas. Vérifie ta connexion Internet.") }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        if status == 404 { throw AppError.message("L'IA n'est pas encore installée sur le serveur (mets le Worker à jour).") }
+        guard status == 200, let text = json["text"] as? String else {
+            throw AppError.message((json["error"] as? String) ?? "L'IA ne répond pas (\(status)).")
+        }
+        return text
+    }
+}

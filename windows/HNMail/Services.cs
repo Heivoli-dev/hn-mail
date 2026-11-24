@@ -42,6 +42,30 @@ public sealed class Services(Store store)
         if (!response.IsSuccessStatusCode) throw new AppException("Le serveur n'a pas enregistré l'état du mail.");
     }
 
+    /// <summary>IA du Worker : « draft » (proposer une réponse) ou « correct » (corriger le texte).</summary>
+    public async Task<string> AiAsync(JsonNode? data)
+    {
+        var key = store.GetSecret("inboxKey");
+        if (string.IsNullOrEmpty(key) || key.Length < 24) throw new AppException("Ajoute la clé HN Mail dans les Réglages.");
+        using var request = new HttpRequestMessage(HttpMethod.Post, InboxUrl + "/ai");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        request.Content = new StringContent(data?.ToJsonString() ?? "{}", Encoding.UTF8, "application/json");
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        HttpResponseMessage response;
+        try { response = await Http.SendAsync(request, cts.Token); }
+        catch { throw new AppException("L'IA ne répond pas. Vérifie ta connexion Internet."); }
+        using (response)
+        {
+            var text = await response.Content.ReadAsStringAsync();
+            JsonNode? json = null;
+            try { json = JsonNode.Parse(text); } catch { }
+            if ((int)response.StatusCode == 404) throw new AppException("L'IA n'est pas encore installée sur le serveur (mets le Worker à jour).");
+            if (!response.IsSuccessStatusCode || json?["text"] is null)
+                throw new AppException(json?["error"]?.GetValue<string>() ?? $"L'IA ne répond pas ({(int)response.StatusCode}).");
+            return json["text"]!.GetValue<string>();
+        }
+    }
+
     public async Task SendAsync(JsonNode data)
     {
         var key = store.GetSecret("brevoKey");

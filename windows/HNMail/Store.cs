@@ -73,6 +73,18 @@ public sealed class Store
         set { State["notifications"] = value; Save(); }
     }
 
+    public bool AutoUpdate
+    {
+        get => State["autoUpdate"]?.GetValue<bool>() ?? true;
+        set { State["autoUpdate"] = value; Save(); }
+    }
+
+    public bool AutoCorrect
+    {
+        get => State["autoCorrect"]?.GetValue<bool>() ?? true;
+        set { State["autoCorrect"] = value; Save(); }
+    }
+
     public string TeamName
     {
         get

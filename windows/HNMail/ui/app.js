@@ -21,6 +21,7 @@ window.chrome.webview.addEventListener('message', (event) => {
   if (msg.event === 'inbox') { setMessages(msg.messages); error = ''; render(); }
   if (msg.event === 'error') { error = msg.message; render(); }
   if (msg.event === 'open') openMessage(msg.id);
+  if (msg.event === 'update') { state.update = msg.update; renderUpdate(); }
 });
 
 // ---------- modèles ----------
@@ -187,10 +188,11 @@ function renderMain() {
   mountComposer($('#reply-host'), {
     email: m.fromEmail, name: m.fromName, first: firstName(m), originalSubject: m.subject,
     subject: /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject}`, inReplyTo: m.messageId, mailbox: 'contact',
-    template: category(m)[1], messageId: m.id, editable: false,
+    template: category(m)[1], messageId: m.id, editable: false, body: m.text,
   });
 }
 
+let autoCorrectBeforeSend = async () => true;
 function mountComposer(host, target) {
   let tplId = '';
   let text = '';
@@ -202,7 +204,14 @@ function mountComposer(host, target) {
       <label>Envoyer depuis<select id="c-box"><option value="contact">contact@heivoli-network.fr</option><option value="news">news@heivoli-network.fr</option></select></label>` : ''}
     <label>Réponse prête<div class="tpls" id="c-tpls"></div></label>
     <label>Objet<input id="c-subject"></label>
-    <label>Ton message<textarea id="c-text"></textarea></label>
+    <label>Ton message<textarea id="c-text" spellcheck="true" lang="fr"></textarea></label>
+    <div class="ai">
+      <input id="c-ai-hint" placeholder="Consigne pour l'IA (facultatif) : ex. « refuse poliment »">
+      <div class="ai-row"><button id="c-ai-draft" title="L'IA lit le mail reçu et écrit une réponse à partir du modèle choisi">✨ Proposer une réponse</button>
+      <button id="c-ai-fix" title="Corrige l'orthographe et la grammaire sans changer ton texte">Corriger</button>
+      <button id="c-ai-undo" hidden title="Revenir au texte d'avant l'IA">Annuler</button></div>
+      <span class="ai-msg" id="c-ai-msg"></span>
+    </div>
     <label>Texte du bouton (vide = pas de bouton)<input id="c-button"></label>
     <button class="primary send" id="c-send">Envoyer depuis contact@ ➤</button>
     <span class="msg" id="c-msg"></span>
@@ -236,7 +245,9 @@ function mountComposer(host, target) {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg.className = 'msg err'; msg.textContent = 'Adresse du destinataire invalide.'; return; }
     if (!target.subject.trim()) { msg.className = 'msg err'; msg.textContent = 'Ajoute un objet.'; return; }
     const button = q('#c-send');
-    button.disabled = true; button.textContent = 'Envoi…'; msg.textContent = '';
+    button.disabled = true; button.textContent = 'Vérification…'; msg.textContent = '';
+    if (!(await autoCorrectBeforeSend())) { button.disabled = false; update(); return; }
+    button.textContent = 'Envoi…';
     try {
       state = await call('send', {
         mailbox: target.mailbox, toEmail: email, toName: target.name || '', subject: target.subject,
@@ -253,6 +264,47 @@ function mountComposer(host, target) {
     button.disabled = false; update();
   };
   q('#c-send').addEventListener('click', send);
+
+  // ----- IA -----
+  let before = null;
+  let correctedFor = '';
+  const setText = (value) => { before = text; text = value; q('#c-text').value = value; q('#c-ai-undo').hidden = false; update(); };
+  const aiMsg = (value, err) => { const el = q('#c-ai-msg'); el.textContent = value; el.className = `ai-msg${err ? ' err' : ''}`; };
+  const busy = (on) => { ['#c-ai-draft', '#c-ai-fix', '#c-send'].forEach((s) => { q(s).disabled = on; }); };
+  q('#c-ai-draft').addEventListener('click', async () => {
+    busy(true); aiMsg("L'IA écrit…");
+    try {
+      const tpl = template(tplId);
+      const result = await call('ai', { action: 'draft', mail: { fromName: target.name || target.email || '', subject: target.originalSubject || '', text: target.body || '' },
+        template: { name: tpl.name, title: tpl.title, message: tpl.message }, current: text, instruction: q('#c-ai-hint').value });
+      setText(result); aiMsg("Réponse proposée par l'IA : relis-la avant d'envoyer.");
+    } catch (e) { aiMsg(e.message, true); }
+    busy(false);
+  });
+  q('#c-ai-fix').addEventListener('click', async () => {
+    if (!text.trim()) return;
+    busy(true); aiMsg('Correction…');
+    try {
+      const result = await call('ai', { action: 'correct', text });
+      correctedFor = result;
+      if (result === text) aiMsg('Aucune faute trouvée ✓'); else { setText(result); aiMsg('Texte corrigé ✓'); }
+    } catch (e) { aiMsg(e.message, true); }
+    busy(false);
+  });
+  q('#c-ai-undo').addEventListener('click', () => {
+    if (before === null) return;
+    text = before; before = null; q('#c-text').value = text; q('#c-ai-undo').hidden = true; aiMsg(''); update();
+  });
+  // Correcteur auto avant l'envoi : si l'IA corrige quelque chose, on montre le texte avant d'envoyer.
+  autoCorrectBeforeSend = async () => {
+    if (state.autoCorrect === false || !text.trim() || correctedFor === text) return true;
+    try {
+      const result = await call('ai', { action: 'correct', text });
+      correctedFor = result;
+      if (result !== text) { setText(result); aiMsg("J'ai corrigé quelques fautes : vérifie l'aperçu puis clique à nouveau sur Envoyer."); return false; }
+    } catch { /* IA indisponible : on envoie tel quel */ }
+    return true;
+  };
   host.addEventListener('keydown', (e) => { if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); send(); } });
   apply(template(target.template));
 }
@@ -296,7 +348,39 @@ function renderSettings() {
   $('#notif').checked = state.notifications !== false;
   $('#team').value = state.teamName || '';
   $('#poll').value = String(state.pollMinutes || 2);
+  $('#autocorrect').checked = state.autoCorrect !== false;
+  $('#autoupdate').checked = state.autoUpdate !== false;
+  renderUpdate();
 }
+
+// ---------- mise à jour par Internet ----------
+let updateDismissed = false;
+let updateMessage = '';
+function renderUpdate() {
+  const u = state.update || {};
+  $('#version').textContent = `Version installée : ${u.currentVersion || '?'} (build ${u.currentBuild ?? 0})`;
+  $('#update-status').textContent = updateMessage || (u.available ? `La version ${u.latestVersion} est disponible.` : u.latestVersion ? 'HN Mail est à jour.' : '');
+  $('#update-install').hidden = !u.available;
+  $('#update-banner').hidden = !u.available || updateDismissed;
+  $('#update-banner-text').textContent = `HN Mail ${u.latestVersion || ''} est disponible (tu as la ${u.currentVersion || '?'})`;
+}
+async function installUpdate() {
+  updateMessage = 'Téléchargement et installation… HN Mail va redémarrer.';
+  renderUpdate();
+  document.querySelectorAll('.update-install').forEach((b) => { b.disabled = true; });
+  try { await call('installUpdate'); }
+  catch (e) { updateMessage = e.message; renderUpdate(); document.querySelectorAll('.update-install').forEach((b) => { b.disabled = false; }); }
+}
+$('#update-check').addEventListener('click', async () => {
+  updateMessage = 'Vérification…'; renderUpdate();
+  try { state.update = await call('checkUpdate'); updateMessage = ''; }
+  catch (e) { updateMessage = e.message; }
+  renderUpdate();
+});
+document.querySelectorAll('.update-install').forEach((b) => b.addEventListener('click', installUpdate));
+$('#update-later').addEventListener('click', () => { updateDismissed = true; renderUpdate(); });
+$('#autocorrect').addEventListener('change', async (e) => { state = await call('setPrefs', { autoCorrect: e.target.checked }); });
+$('#autoupdate').addEventListener('change', async (e) => { state = await call('setPrefs', { autoUpdate: e.target.checked }); });
 let inboxEditing = false;
 let brevoEditing = false;
 function openSettings() { closeModals(); inboxEditing = false; brevoEditing = false; $('#settings-error').textContent = ''; renderSettings(); $('#settings').hidden = false; }
@@ -380,5 +464,6 @@ $('#open-templates').addEventListener('click', (e) => { e.preventDefault(); clos
   if (Array.isArray(state.templates) && state.templates.length) templates = state.templates;
   setMessages(state.messages);
   render();
+  renderUpdate();
   if (state.inboxConfigured) refresh(); else openSettings();
 })();
