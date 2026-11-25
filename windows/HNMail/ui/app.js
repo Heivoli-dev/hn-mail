@@ -349,6 +349,9 @@ function renderSettings() {
   $('#team').value = state.teamName || '';
   $('#poll').value = String(state.pollMinutes || 2);
   $('#autocorrect').checked = state.autoCorrect !== false;
+  $('#ai-engine').value = state.aiEngine || 'claude';
+  $('#ollama-model').value = state.ollamaModel || 'mistral';
+  renderAiHelp();
   $('#autoupdate').checked = state.autoUpdate !== false;
   renderUpdate();
 }
@@ -379,6 +382,15 @@ $('#update-check').addEventListener('click', async () => {
 });
 document.querySelectorAll('.update-install').forEach((b) => b.addEventListener('click', installUpdate));
 $('#update-later').addEventListener('click', () => { updateDismissed = true; renderUpdate(); });
+function renderAiHelp() {
+  const ollama = $('#ai-engine').value === 'ollama';
+  $('#ollama-row').hidden = !ollama;
+  $('#ai-help').textContent = ollama
+    ? "Installe l'app gratuite Ollama (ollama.com), puis dans un terminal : ollama pull mistral. Tourne sur ton PC, sans Internet et gratuitement."
+    : "Le plus doué pour écrire. Passe par ton Worker et utilise le crédit de ton compte Anthropic (environ 1 centime par réponse).";
+}
+$('#ai-engine').addEventListener('change', async (e) => { state = await call('setPrefs', { aiEngine: e.target.value }); renderAiHelp(); });
+$('#ollama-model').addEventListener('change', async (e) => { state = await call('setPrefs', { ollamaModel: e.target.value }); });
 $('#autocorrect').addEventListener('change', async (e) => { state = await call('setPrefs', { autoCorrect: e.target.checked }); });
 $('#autoupdate').addEventListener('change', async (e) => { state = await call('setPrefs', { autoUpdate: e.target.checked }); });
 let inboxEditing = false;

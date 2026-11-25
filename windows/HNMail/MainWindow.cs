@@ -339,6 +339,8 @@ public sealed class MainWindow : Window
                     if (data?["teamName"] is JsonNode team) store.TeamName = team.GetValue<string>();
                     if (data?["autoUpdate"] is JsonNode autoUpdate) store.AutoUpdate = autoUpdate.GetValue<bool>();
                     if (data?["autoCorrect"] is JsonNode autoCorrect) store.AutoCorrect = autoCorrect.GetValue<bool>();
+                    if (data?["aiEngine"] is JsonNode engine) store.AiEngine = engine.GetValue<string>();
+                    if (data?["ollamaModel"] is JsonNode model) store.OllamaModel = model.GetValue<string>();
                     result = State();
                     break;
                 case "ai":
@@ -374,6 +376,8 @@ public sealed class MainWindow : Window
         ["teamName"] = store.TeamName,
         ["autoUpdate"] = store.AutoUpdate,
         ["autoCorrect"] = store.AutoCorrect,
+        ["aiEngine"] = store.AiEngine,
+        ["ollamaModel"] = store.OllamaModel,
         ["update"] = updater.ToJson(),
         ["replied"] = store.Replied.DeepClone(),
         ["templates"] = store.Templates?.DeepClone(),

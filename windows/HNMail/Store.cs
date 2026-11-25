@@ -79,6 +79,18 @@ public sealed class Store
         set { State["autoUpdate"] = value; Save(); }
     }
 
+    public string AiEngine
+    {
+        get => State["aiEngine"]?.GetValue<string>() ?? "claude";
+        set { State["aiEngine"] = value == "ollama" ? "ollama" : "claude"; Save(); }
+    }
+
+    public string OllamaModel
+    {
+        get { var m = State["ollamaModel"]?.GetValue<string>()?.Trim(); return string.IsNullOrEmpty(m) ? "mistral" : m; }
+        set { State["ollamaModel"] = value; Save(); }
+    }
+
     public bool AutoCorrect
     {
         get => State["autoCorrect"]?.GetValue<bool>() ?? true;

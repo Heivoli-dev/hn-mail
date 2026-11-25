@@ -103,3 +103,4 @@ code { font-family: Consolas, monospace; background: #f3f2fb; padding: 2px 6px; 
 .ai-row button[hidden] { display: none; }
 .ai-msg { font-size: 12px; color: #6e6e78; }
 .ai-msg.err { color: #c4271b; }
+#ollama-row[hidden] { display: none; }

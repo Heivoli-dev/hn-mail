@@ -119,7 +119,14 @@ struct AIAPI {
     static let url = InboxAPI.url.appendingPathComponent("ai")
 
     func draft(mailFrom: String, subject: String, body: String, template: ReplyTemplate, current: String, instruction: String) async throws -> String {
-        try await call([
+        let engine = AIEngine.current
+        if engine != .claude {
+            // Le modèle d'Apple a une petite mémoire : on coupe les très longs mails.
+            let prompt = AIPrompts.draftRequest(from: mailFrom, subject: subject, body: body, template: template, current: current,
+                                                instruction: instruction, maxMail: engine == .apple ? 4000 : 20000)
+            return try await local(engine, system: AIPrompts.draft, prompt: prompt)
+        }
+        return try await call([
             "action": "draft",
             "mail": ["fromName": mailFrom, "subject": subject, "text": body],
             "template": ["name": template.name, "title": template.title, "message": template.message],
@@ -129,7 +136,19 @@ struct AIAPI {
     }
 
     func correct(_ text: String) async throws -> String {
-        try await call(["action": "correct", "text": text])
+        let engine = AIEngine.current
+        if engine != .claude {
+            let result = AIPrompts.clean(try await local(engine, system: AIPrompts.correct, prompt: "<texte>\n\(text)\n</texte>"))
+            return result.isEmpty ? text : result
+        }
+        return try await call(["action": "correct", "text": text])
+    }
+
+    private func local(_ engine: AIEngine, system: String, prompt: String) async throws -> String {
+        let text = engine == .apple ? try await AppleAI.respond(system: system, prompt: prompt)
+                                    : try await OllamaAI.respond(system: system, prompt: prompt)
+        guard !text.isEmpty else { throw AppError.message("L'IA n'a rien proposé, réessaie.") }
+        return text
     }
 
     private func call(_ payload: [String: Any]) async throws -> String {

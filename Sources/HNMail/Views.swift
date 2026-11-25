@@ -741,13 +741,7 @@ struct SettingsView: View {
                 Text("Les notifications s'affichent comme celles de Discord. HN Mail reste dans la barre des menus quand tu fermes la fenêtre. Pour les autoriser : Réglages Système › Notifications › HN Mail.")
             }
 
-            Section {
-                Toggle("Corriger automatiquement avant chaque envoi", isOn: $autoCorrect)
-            } header: {
-                Text("IA")
-            } footer: {
-                Text("Dans la réponse : « ✨ Proposer une réponse » écrit un brouillon à partir du mail reçu et du modèle choisi, « Corriger » enlève les fautes. L'IA tourne sur le Worker (clé ANTHROPIC_API_KEY) : ses consignes se changent sans réinstaller l'app.")
-            }
+            AISettingsSection()
 
             UpdateSettingsSection()
 
@@ -757,6 +751,55 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(.vertical, 8)
+    }
+}
+
+struct AISettingsSection: View {
+    @AppStorage("aiEngine") private var engine = AIEngine.claude.rawValue
+    @AppStorage("ollamaModel") private var ollamaModel = "mistral"
+    @AppStorage("autoCorrect") private var autoCorrect = true
+    @State private var ollamaStatus = ""
+
+    var body: some View {
+        Section {
+            Picker("Moteur IA", selection: $engine) {
+                ForEach(AIEngine.allCases) { item in Text(item.label).tag(item.rawValue) }
+            }
+            switch AIEngine(rawValue: engine) ?? .claude {
+            case .claude:
+                Text("Le plus doué pour écrire. Passe par ton Worker et utilise le crédit de ton compte Anthropic (environ 1 centime par réponse).")
+                    .font(.caption).foregroundStyle(.secondary)
+            case .apple:
+                let state = AppleAI.status
+                Label(state.text, systemImage: state.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(state.ok ? Color.green : Color.orange)
+                Text("Tourne sur ton Mac, sans Internet et gratuitement. Très bien pour corriger ; pour écrire, c'est plus simple que Claude.")
+                    .font(.caption).foregroundStyle(.secondary)
+            case .ollama:
+                HStack {
+                    TextField("Modèle Ollama", text: $ollamaModel)
+                    Button("Tester") {
+                        Task {
+                            do {
+                                let models = try await OllamaAI.installedModels()
+                                let wanted = ollamaModel.trimmingCharacters(in: .whitespaces)
+                                if models.contains(where: { $0 == wanted || $0.hasPrefix(wanted + ":") }) { ollamaStatus = "✅ Ollama est prêt avec « \(wanted) »." }
+                                else if models.isEmpty { ollamaStatus = "Aucun modèle installé. Dans le Terminal : ollama pull \(wanted)" }
+                                else { ollamaStatus = "« \(wanted) » n'est pas installé. Modèles présents : \(models.joined(separator: ", "))" }
+                            } catch { ollamaStatus = error.localizedDescription }
+                        }
+                    }
+                }
+                if !ollamaStatus.isEmpty { Text(ollamaStatus).font(.caption) }
+                Text("Installe l'app gratuite Ollama (ollama.com), puis dans le Terminal : ollama pull mistral. Tourne sur ton Mac, sans Internet et gratuitement.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Toggle("Corriger automatiquement avant chaque envoi", isOn: $autoCorrect)
+        } header: {
+            Text("IA")
+        } footer: {
+            Text("Dans la réponse : « ✨ Proposer une réponse » écrit un brouillon à partir du mail reçu et du modèle choisi, « Corriger » enlève les fautes.")
+        }
     }
 }
 

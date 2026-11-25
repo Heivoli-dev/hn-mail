@@ -31,7 +31,13 @@ Les mails reçus sur contact@ et news@ sont gardés par le Worker de heivoli-net
 3. Dans l'app : **Enregistrer**. Les mails s'affichent.
 4. Ajoute ta clé **Brevo** (app.brevo.com › SMTP & API › Clés API) pour pouvoir répondre.
 
-## Activer l'IA (une seule fois)
+## Choisir le moteur IA (Réglages › IA)
+
+- **Claude** (par défaut) : le meilleur pour écrire, passe par le Worker et le crédit Anthropic (voir ci-dessous).
+- **Apple Intelligence** (Mac) : tourne sur le Mac, sans Internet et gratuit. Il faut macOS 26, un Mac avec puce Apple et Apple Intelligence activé (Réglages Système › Apple Intelligence et Siri).
+- **Ollama** (Mac et Windows) : modèle libre sur l'ordinateur, sans Internet et gratuit. Installe [Ollama](https://ollama.com), puis `ollama pull mistral`.
+
+## Activer l'IA Claude (une seule fois)
 
 L'IA tourne sur le Worker, pas dans l'app : ses consignes sont dans `HNfr/discord-worker/src/inbox-ai.js` et se changent sans réinstaller HN Mail.
 

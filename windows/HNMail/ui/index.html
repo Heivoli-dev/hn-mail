@@ -68,8 +68,10 @@
       </section>
       <section class="group">
         <h3>IA</h3>
+        <label>Moteur IA<select id="ai-engine"><option value="claude">Claude (en ligne, le meilleur)</option><option value="ollama">Ollama (sur ce PC, gratuit)</option></select></label>
+        <label id="ollama-row">Modèle Ollama<input id="ollama-model" placeholder="mistral"></label>
+        <p class="help" id="ai-help"></p>
         <label class="check"><input id="autocorrect" type="checkbox"> Corriger automatiquement avant chaque envoi</label>
-        <p class="help">Dans la réponse : « ✨ Proposer une réponse » écrit un brouillon à partir du mail reçu et du modèle choisi, « Corriger » enlève les fautes. L'IA tourne sur le Worker (clé ANTHROPIC_API_KEY) : ses consignes se changent sans réinstaller l'app.</p>
       </section>
       <section class="group">
         <h3>Mises à jour</h3>
