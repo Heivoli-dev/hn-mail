@@ -16,6 +16,9 @@ final class MailStore: ObservableObject {
     @Published var inboxConfigured = InboxAPI.isConfigured
     @Published var sent: [SentMail] = []
     @Published var selectedSentID: SentMail.ID?
+    @Published var importingBrevo = false
+    @Published var brevoImportStatus = ""
+    private var autoImportTried = false
 
     let brevo = BrevoAPI()
 
@@ -111,6 +114,48 @@ final class MailStore: ObservableObject {
         saveSentList()
     }
 
+    /// Récupère dans Brevo les mails envoyés avant la version 1.4 (aux personnes qui ont écrit à contact@ ou news@).
+    func importFromBrevo(automatic: Bool = false) async {
+        guard !importingBrevo else { return }
+        guard brevo.apiKey?.isEmpty == false else {
+            if !automatic { brevoImportStatus = "Ajoute ta clé Brevo dans les Réglages." }
+            return
+        }
+        importingBrevo = true
+        brevoImportStatus = "Recherche des anciens mails dans Brevo…"
+        defer { importingBrevo = false }
+        let recipients = Set((messages.map(\.fromEmail) + sent.map(\.toEmail)).map { $0.lowercased() }.filter { $0.contains("@") })
+        var found = 0
+        var failed = false
+        for (index, email) in recipients.sorted().enumerated() {
+            brevoImportStatus = "Recherche dans Brevo… (\(index + 1)/\(recipients.count))"
+            for month in 0..<3 {
+                let logs: [BrevoSentLog]
+                do { logs = try await brevo.sentLogs(to: email, monthsAgo: month) } catch { failed = true; continue }
+                for log in logs {
+                    let ours = log.from.isEmpty || log.from.hasSuffix("@heivoli-network.fr")
+                    guard ours, !sent.contains(where: { $0.id == log.uuid }) else { continue }
+                    // Déjà dans Envoyés (envoyé avec la 1.4) : même personne, même objet, à 3 minutes près.
+                    let date = log.date ?? Date()
+                    if sent.contains(where: { $0.toEmail.lowercased() == log.email && $0.subject == log.subject && abs($0.sentAt.timeIntervalSince(date)) < 180 }) { continue }
+                    guard let html = try? await brevo.sentContent(uuid: log.uuid), !html.isEmpty else { continue }
+                    let original = messages
+                        .filter { $0.fromEmail.lowercased() == log.email && $0.date <= date && log.subject.lowercased().contains($0.subject.lowercased()) }
+                        .max { $0.date < $1.date }
+                    sent.append(SentMail(id: log.uuid, mailbox: log.from.hasPrefix("news@") ? "news" : "contact", toEmail: log.email,
+                                         toName: original?.fromName ?? "", subject: log.subject, text: BrevoAPI.htmlToText(html), html: html,
+                                         sentAt: date, by: "Équipe", inboxId: original?.id ?? "", template: "brevo"))
+                    found += 1
+                }
+            }
+        }
+        saveSentList()
+        await pushPendingSent()
+        if !failed { UserDefaults.standard.set(true, forKey: "brevoImportDone") }
+        brevoImportStatus = found > 0 ? "\(found) ancien(s) mail(s) récupéré(s) depuis Brevo ✓"
+            : failed ? "Brevo n'a pas répondu pour certains mails, réessaie plus tard." : "Aucun autre ancien mail trouvé dans Brevo."
+    }
+
     private func refreshSent() async {
         await pushPendingSent()
         guard let remote = try? await InboxAPI().fetchSent() else { return }
@@ -154,6 +199,10 @@ final class MailStore: ObservableObject {
             updateBadge()
             await pushPendingReplied()
             await refreshSent()
+            if !autoImportTried && !UserDefaults.standard.bool(forKey: "brevoImportDone") {
+                autoImportTried = true
+                Task { await importFromBrevo(automatic: true) }
+            }
             error = nil
             if selectedID == nil || selected == nil { selectedID = visible.first?.id }
         } catch {

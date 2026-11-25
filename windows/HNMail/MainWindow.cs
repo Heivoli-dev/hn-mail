@@ -370,6 +370,21 @@ public sealed class MainWindow : Window
                     if (Str("messageId").Length > 0) await MarkRepliedAsync(Str("messageId"), true);
                     result = State();
                     break;
+                case "importBrevo":
+                {
+                    var existing = MergedSent().ToList();
+                    string S(JsonNode? n, string k) => n?[k]?.GetValue<string>() ?? "";
+                    var recipients = messages.Select(m => S(m, "replyTo").Length > 0 ? S(m, "replyTo") : S(m, "fromEmail"))
+                        .Concat(existing.Select(x => S(x, "toEmail")))
+                        .Select(e => e.Trim().ToLowerInvariant()).Where(e => e.Contains('@')).Distinct().OrderBy(e => e).ToList();
+                    var (found, failed) = await services.ImportFromBrevoAsync(recipients, existing, messages, "Équipe");
+                    foreach (var mail in found) store.AddPendingSent(mail);
+                    await PushPendingSentAsync();
+                    try { sentMails = await services.FetchSentAsync(); } catch { }
+                    if (!failed) store.BrevoImportDone = true;
+                    result = new JsonObject { ["found"] = found.Count, ["failed"] = failed, ["sent"] = MergedSent() };
+                    break;
+                }
                 case "sent":
                     await PushPendingSentAsync();
                     try { sentMails = await services.FetchSentAsync(); } catch { }
@@ -425,6 +440,7 @@ public sealed class MainWindow : Window
         ["teamName"] = store.TeamName,
         ["autoUpdate"] = store.AutoUpdate,
         ["autoCorrect"] = store.AutoCorrect,
+        ["brevoImportDone"] = store.BrevoImportDone,
         ["aiEngine"] = store.AiEngine,
         ["ollamaModel"] = store.OllamaModel,
         ["update"] = updater.ToJson(),

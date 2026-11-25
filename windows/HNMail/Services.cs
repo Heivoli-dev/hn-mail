@@ -31,6 +31,87 @@ public sealed class Services(Store store)
     }
 
     /// <summary>Marque un mail « répondu » (ou à traiter) pour toute l'équipe.</summary>
+    // ---------- Anciens mails envoyés, retrouvés dans l'historique de Brevo ----------
+    private async Task<JsonNode?> BrevoGetAsync(string url)
+    {
+        var key = store.GetSecret("brevoKey");
+        if (string.IsNullOrEmpty(key)) throw new AppException("Ajoute ta clé Brevo dans les Réglages.");
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Add("api-key", key);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        using var response = await Http.SendAsync(request);
+        if ((int)response.StatusCode == 404) return null;
+        if (!response.IsSuccessStatusCode) throw new AppException($"Brevo ne répond pas ({(int)response.StatusCode}).");
+        return JsonNode.Parse(await response.Content.ReadAsStringAsync());
+    }
+
+    private static string HtmlToText(string html)
+    {
+        var text = System.Text.RegularExpressions.Regex.Replace(html, @"(?is)<(style|script|head)[^>]*>.*?</\1>", "");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"(?i)<br\s*/?>|</(p|div|tr|h[1-6]|li)>", "\n");
+        text = System.Text.RegularExpressions.Regex.Replace(text, "<[^>]+>", "");
+        text = System.Net.WebUtility.HtmlDecode(text);
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"[ \t]+\n", "\n");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\n{3,}", "\n\n");
+        return text.Trim();
+    }
+
+    /// <summary>Cherche dans Brevo les mails envoyés (3 derniers mois) aux adresses données. Renvoie les nouveaux, prêts pour « Envoyés ».</summary>
+    public async Task<(List<JsonObject> found, bool failed)> ImportFromBrevoAsync(IEnumerable<string> recipients, List<JsonNode?> existing, IEnumerable<JsonNode?> received, string by)
+    {
+        var found = new List<JsonObject>();
+        var failed = false;
+        string S(JsonNode? n, string k) => n?[k]?.GetValue<string>() ?? "";
+        var ids = new HashSet<string>(existing.Select(x => S(x, "id")));
+        foreach (var email in recipients)
+        {
+            for (var month = 0; month < 3; month++)
+            {
+                var end = DateTime.UtcNow.Date.AddDays(-30 * month);
+                var start = end.AddDays(-29);
+                JsonNode? list;
+                try { list = await BrevoGetAsync($"https://api.brevo.com/v3/smtp/emails?email={Uri.EscapeDataString(email)}&startDate={start:yyyy-MM-dd}&endDate={end:yyyy-MM-dd}&limit=100&sort=desc"); }
+                catch { failed = true; continue; }
+                foreach (var log in list?["transactionalEmails"]?.AsArray() ?? new JsonArray())
+                {
+                    var uuid = S(log, "uuid");
+                    var from = S(log, "from").ToLowerInvariant();
+                    var subject = S(log, "subject");
+                    if (uuid.Length == 0 || ids.Contains(uuid) || (from.Length > 0 && !from.EndsWith("@heivoli-network.fr"))) continue;
+                    var date = DateTimeOffset.TryParse(S(log, "date"), out var d) ? d : DateTimeOffset.UtcNow;
+                    // Déjà dans Envoyés (envoyé avec la 1.4) : même personne, même objet, à 3 minutes près.
+                    if (existing.Concat(found.Cast<JsonNode?>()).Any(x => S(x, "toEmail").Equals(email, StringComparison.OrdinalIgnoreCase) && S(x, "subject") == subject
+                        && DateTimeOffset.TryParse(S(x, "sentAt"), out var t) && Math.Abs((t - date).TotalSeconds) < 180)) continue;
+                    string html;
+                    try { html = S(await BrevoGetAsync($"https://api.brevo.com/v3/smtp/emails/{Uri.EscapeDataString(uuid)}"), "body"); }
+                    catch { failed = true; continue; }
+                    if (html.Length == 0) continue;
+                    var original = received
+                        .Where(m => (S(m, "replyTo").Length > 0 ? S(m, "replyTo") : S(m, "fromEmail")).Equals(email, StringComparison.OrdinalIgnoreCase)
+                                    && subject.Contains(S(m, "subject"), StringComparison.OrdinalIgnoreCase))
+                        .OrderByDescending(m => S(m, "receivedAt"), StringComparer.Ordinal)
+                        .FirstOrDefault();
+                    ids.Add(uuid);
+                    found.Add(new JsonObject
+                    {
+                        ["id"] = uuid,
+                        ["mailbox"] = from.StartsWith("news@") ? "news" : "contact",
+                        ["toEmail"] = email,
+                        ["toName"] = S(original, "fromName"),
+                        ["subject"] = subject,
+                        ["text"] = HtmlToText(html),
+                        ["html"] = html,
+                        ["by"] = by,
+                        ["inboxId"] = S(original, "id"),
+                        ["template"] = "brevo",
+                        ["sentAt"] = date.ToUniversalTime().ToString("o"),
+                    });
+                }
+            }
+        }
+        return (found, failed);
+    }
+
     /// <summary>Mails envoyés par l'équipe (Mac et Windows), gardés sur le Worker.</summary>
     public async Task<JsonArray> FetchSentAsync()
     {

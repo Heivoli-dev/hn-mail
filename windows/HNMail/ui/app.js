@@ -134,9 +134,25 @@ function visible() {
 const template = (id) => templates.find((t) => t.id === id) || templates[templates.length - 1] || DEFAULT_TEMPLATES[5];
 
 // ---------- affichage ----------
+let importing = false;
+let importStatus = '';
+let autoImportTried = false;
 async function loadSent() {
   try { sentMails = (await call('sent')) || []; } catch { /* Worker pas à jour : on garde la liste actuelle */ }
   render();
+  if (!autoImportTried && !state.brevoImportDone && state.brevoConfigured && messages.length) { autoImportTried = true; importBrevo(true); }
+}
+// Récupère dans Brevo les mails envoyés avant la version 1.4.
+async function importBrevo(automatic) {
+  if (importing) return;
+  importing = true; importStatus = 'Recherche des anciens mails dans Brevo…'; render();
+  try {
+    const r = await call('importBrevo');
+    sentMails = r.sent || sentMails;
+    if (!r.failed) state.brevoImportDone = true;
+    importStatus = r.found ? `${r.found} ancien(s) mail(s) récupéré(s) depuis Brevo ✓` : r.failed ? "Brevo n'a pas répondu pour certains mails, réessaie plus tard." : 'Aucun autre ancien mail trouvé dans Brevo.';
+  } catch (e) { importStatus = automatic ? '' : e.message; }
+  importing = false; render();
 }
 const sentWhen = (s) => new Date(s.sentAt || Date.now()).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 function visibleSent() {
@@ -147,10 +163,12 @@ function renderSent() {
   const list = $('#list');
   const items = visibleSent();
   if (!items.find((s) => s.id === selectedSentId)) selectedSentId = items[0]?.id ?? null;
-  list.innerHTML = items.length ? items.map((s) => `<div class="item${s.id === selectedSentId ? ' on' : ''}" data-sent="${esc(s.id)}"><div class="top"><strong>À : ${esc(s.toName || s.toEmail)}</strong><time>${esc(sentWhen(s))}</time></div>
+  const head = `<div class="import-bar"><span>${esc(importStatus || 'Mails envoyés avant la 1.4 ?')}</span><button id="import-brevo"${importing ? ' disabled' : ''}>${importing ? 'Recherche…' : 'Récupérer depuis Brevo'}</button></div>`;
+  list.innerHTML = head + (items.length ? items.map((s) => `<div class="item${s.id === selectedSentId ? ' on' : ''}" data-sent="${esc(s.id)}"><div class="top"><strong>À : ${esc(s.toName || s.toEmail)}</strong><time>${esc(sentWhen(s))}</time></div>
       <span class="sub">${esc(s.subject)}</span><span class="pre">${esc((s.text || '').slice(0, 220))}</span>
       <span class="tag">Envoyé par ${esc(s.by || 'Équipe')}${s.pending ? ' · pas encore partagé' : ''}</span></div>`).join('')
-    : `<div class="empty">${search ? 'Aucun résultat' : "Aucun mail envoyé pour l'instant"}</div>`;
+    : `<div class="empty">${search ? 'Aucun résultat' : "Aucun mail envoyé pour l'instant"}</div>`);
+  $('#import-brevo').addEventListener('click', () => importBrevo(false));
   const s = sentMails.find((x) => x.id === selectedSentId);
   shownId = null;
   $('#main').innerHTML = s ? `<div class="read"><h2>${esc(s.subject)}</h2>

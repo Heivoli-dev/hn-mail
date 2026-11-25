@@ -191,8 +191,21 @@ struct SentListView: View {
             .tag(mail.id)
         }
         .listStyle(.inset)
+        .safeAreaInset(edge: .top) {
+            HStack(spacing: 8) {
+                if store.importingBrevo { ProgressView().controlSize(.small) }
+                Text(store.brevoImportStatus.isEmpty ? "Mails envoyés avant la 1.4 ?" : store.brevoImportStatus)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Spacer()
+                Button("Récupérer depuis Brevo") { Task { await store.importFromBrevo() } }
+                    .controlSize(.small)
+                    .disabled(store.importingBrevo)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(.bar)
+        }
         .overlay {
-            if store.visibleSent.isEmpty {
+            if store.visibleSent.isEmpty && !store.importingBrevo {
                 Text(store.search.isEmpty ? "Aucun mail envoyé pour l'instant" : "Aucun résultat").foregroundStyle(.secondary)
             }
         }

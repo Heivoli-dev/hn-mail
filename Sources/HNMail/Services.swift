@@ -149,6 +149,74 @@ struct BrevoAPI {
     }
 }
 
+/// Anciens mails envoyés, retrouvés dans l'historique de Brevo.
+struct BrevoSentLog {
+    let uuid: String
+    let email: String
+    let subject: String
+    let from: String
+    let date: Date?
+}
+
+extension BrevoAPI {
+    private func get(_ url: URL) async throws -> [String: Any] {
+        guard let apiKey, !apiKey.isEmpty else { throw AppError.message("Ajoute ta clé Brevo dans les Réglages.") }
+        var request = URLRequest(url: url)
+        request.setValue(apiKey, forHTTPHeaderField: "api-key")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 30
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        if status == 404 { return [:] }
+        guard (200..<300).contains(status) else { throw AppError.message((json["message"] as? String) ?? "Brevo ne répond pas (\(status)).") }
+        return json
+    }
+
+    /// Mails envoyés à une adresse pendant une période d'un mois (0 = les 30 derniers jours, 1 = le mois d'avant…).
+    func sentLogs(to email: String, monthsAgo: Int) async throws -> [BrevoSentLog] {
+        let day: TimeInterval = 86400
+        let end = Date().addingTimeInterval(-Double(monthsAgo * 30) * day)
+        let start = end.addingTimeInterval(-29 * day)
+        let format = DateFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX")
+        format.dateFormat = "yyyy-MM-dd"
+        var components = URLComponents(string: "https://api.brevo.com/v3/smtp/emails")!
+        components.queryItems = [
+            URLQueryItem(name: "email", value: email),
+            URLQueryItem(name: "startDate", value: format.string(from: start)),
+            URLQueryItem(name: "endDate", value: format.string(from: end)),
+            URLQueryItem(name: "limit", value: "100"),
+            URLQueryItem(name: "sort", value: "desc"),
+        ]
+        let json = try await get(components.url!)
+        return ((json["transactionalEmails"] as? [[String: Any]]) ?? []).compactMap { item in
+            guard let uuid = item["uuid"] as? String else { return nil }
+            return BrevoSentLog(uuid: uuid, email: (item["email"] as? String ?? email).lowercased(), subject: item["subject"] as? String ?? "",
+                                from: (item["from"] as? String ?? "").lowercased(), date: InboxAPI.parseDate(item["date"] as? String))
+        }
+    }
+
+    /// Le HTML exact d'un mail envoyé.
+    func sentContent(uuid: String) async throws -> String {
+        let safe = uuid.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-"))) ?? uuid
+        return try await get(URL(string: "https://api.brevo.com/v3/smtp/emails/\(safe)")!)["body"] as? String ?? ""
+    }
+
+    static func htmlToText(_ html: String) -> String {
+        var text = html
+        for (pattern, replacement) in [("(?is)<(style|script|head)[^>]*>.*?</\\1>", ""), ("(?i)<br\\s*/?>", "\n"), ("(?i)</(p|div|tr|h[1-6]|li)>", "\n"), ("<[^>]+>", "")] {
+            text = text.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
+        }
+        for (entity, char) in [("&nbsp;", " "), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&rsquo;", "’"), ("&amp;", "&")] {
+            text = text.replacingOccurrences(of: entity, with: char)
+        }
+        text = text.replacingOccurrences(of: "[ \t]+\n", with: "\n", options: .regularExpression)
+        text = text.replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 /// IA de HN Mail (sur le Worker) : propose une réponse ou corrige le texte.
 /// Les consignes de l'IA sont sur le serveur : on peut les changer sans réinstaller l'app.
 struct AIAPI {

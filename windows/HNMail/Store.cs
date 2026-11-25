@@ -91,6 +91,12 @@ public sealed class Store
         set { State["ollamaModel"] = value; Save(); }
     }
 
+    public bool BrevoImportDone
+    {
+        get => State["brevoImportDone"]?.GetValue<bool>() ?? false;
+        set { State["brevoImportDone"] = value; Save(); }
+    }
+
     public bool AutoCorrect
     {
         get => State["autoCorrect"]?.GetValue<bool>() ?? true;
