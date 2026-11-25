@@ -32,14 +32,35 @@ enum Mailbox: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Un mail envoyé depuis HN Mail (gardé sur le serveur pour toute l'équipe, et sur ce Mac).
+struct SentMail: Codable, Identifiable, Hashable {
+    let id: String
+    var mailbox: String
+    var toEmail: String
+    var toName: String
+    var subject: String
+    var text: String
+    var html: String
+    var sentAt: Date
+    var by: String
+    var inboxId: String
+    var template: String
+    var synced = false
+
+    var toLabel: String { toName.isEmpty ? toEmail : toName }
+    var fromAddress: String { mailbox == "news" ? Mailbox.news.rawValue : Mailbox.contact.rawValue }
+    var snippet: String { String(text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).prefix(200)) }
+}
+
 enum Folder: Hashable, Identifiable {
-    case todo, replied, all, news
+    case todo, replied, all, sent, news
     var id: String { title }
     var title: String {
         switch self {
         case .todo: return "À traiter"
         case .replied: return "Répondus"
         case .all: return "Tous les mails"
+        case .sent: return "Envoyés"
         case .news: return "Réponses à la newsletter"
         }
     }
@@ -48,6 +69,7 @@ enum Folder: Hashable, Identifiable {
         case .todo: return "tray"
         case .replied: return "checkmark.circle"
         case .all: return "archivebox"
+        case .sent: return "paperplane"
         case .news: return "newspaper"
         }
     }

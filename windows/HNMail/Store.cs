@@ -122,6 +122,26 @@ public sealed class Store
 
     public JsonObject Replied => State["replied"] as JsonObject ?? new JsonObject();
 
+    /// <summary>Mails envoyés pas encore partagés avec le serveur.</summary>
+    public JsonArray PendingSent => State["pendingSent"] as JsonArray ?? new JsonArray();
+
+    public void AddPendingSent(JsonObject mail)
+    {
+        var list = State["pendingSent"] as JsonArray ?? new JsonArray();
+        list.Add(mail);
+        State["pendingSent"] = list;
+        Save();
+    }
+
+    public void RemovePendingSent(string id)
+    {
+        if (State["pendingSent"] is not JsonArray list) return;
+        var item = list.FirstOrDefault(x => x?["id"]?.GetValue<string>() == id);
+        if (item is null) return;
+        list.Remove(item);
+        Save();
+    }
+
     public void SetReplied(string id, bool value)
     {
         var replied = State["replied"] as JsonObject ?? new JsonObject();

@@ -9,6 +9,7 @@ L'app Mac de Heivoli Network pour répondre aux mails reçus sur **contact@heivo
 - Étiquette automatique : support logiciel, partenariat, données, remerciement, contestation
 - 6 réponses prêtes modifiables, aperçu en direct (ordinateur / téléphone)
 - Envoi par Brevo depuis contact@ ou news@, dans la même conversation
+- **Envoyés** : tous les mails envoyés depuis HN Mail (Mac et Windows), affichés tels que la personne les a reçus, et la réponse envoyée sous chaque mail reçu
 - **IA** : « ✨ Proposer une réponse » (l'IA lit le mail et écrit un brouillon à partir du modèle choisi) et « Corriger » (orthographe et grammaire), plus une correction automatique avant chaque envoi
 - **Mise à jour par Internet** : HN Mail vérifie les Releases GitHub, télécharge la nouvelle version, vérifie le fichier, remplace l'app et redémarre (Réglages › Mises à jour)
 

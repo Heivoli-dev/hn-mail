@@ -40,6 +40,7 @@ public sealed class MainWindow : Window
     private readonly DispatcherTimer poller = new();
     private readonly DispatcherTimer updateTimer = new() { Interval = TimeSpan.FromHours(6) };
     private readonly Updater updater = new();
+    private JsonArray sentMails = new();
     private readonly Forms.NotifyIcon tray = new();
     private JsonArray messages = new();
     private bool quitting;
@@ -225,6 +226,34 @@ public sealed class MainWindow : Window
         }
     }
 
+    /// <summary>Partage avec l'équipe les mails envoyés d'ici qui ne le sont pas encore.</summary>
+    private async Task PushPendingSentAsync()
+    {
+        foreach (var mail in store.PendingSent.ToList())
+        {
+            if (mail is null) continue;
+            try { await services.SaveSentAsync(mail); }
+            catch { return; }
+            store.RemovePendingSent(mail["id"]?.GetValue<string>() ?? "");
+        }
+    }
+
+    /// <summary>Envoyés du serveur + ceux d'ici pas encore partagés, du plus récent au plus ancien.</summary>
+    private JsonArray MergedSent()
+    {
+        var all = new List<JsonNode>();
+        var ids = new HashSet<string>();
+        foreach (var mail in sentMails) if (mail is not null && ids.Add(mail["id"]?.GetValue<string>() ?? "")) all.Add(mail.DeepClone());
+        foreach (var mail in store.PendingSent)
+        {
+            if (mail is null || !ids.Add(mail["id"]?.GetValue<string>() ?? "")) continue;
+            var copy = mail.DeepClone();
+            copy["pending"] = true;
+            all.Add(copy);
+        }
+        return new JsonArray(all.OrderByDescending(m => m["sentAt"]?.GetValue<string>() ?? "", StringComparer.Ordinal).ToArray());
+    }
+
     private void SetMessageReplied(string id, bool value)
     {
         var m = messages.FirstOrDefault(x => x?["id"]?.GetValue<string>() == id);
@@ -323,8 +352,28 @@ public sealed class MainWindow : Window
                 case "send":
                     if (data is null) throw new AppException("Rien à envoyer.");
                     await services.SendAsync(data);
+                    store.AddPendingSent(new JsonObject
+                    {
+                        ["id"] = Guid.NewGuid().ToString(),
+                        ["mailbox"] = Str("mailbox") == "news" ? "news" : "contact",
+                        ["toEmail"] = Str("toEmail"),
+                        ["toName"] = Str("toName"),
+                        ["subject"] = Str("subject"),
+                        ["text"] = Str("text"),
+                        ["html"] = Str("html"),
+                        ["by"] = store.TeamName,
+                        ["inboxId"] = Str("messageId"),
+                        ["template"] = Str("template"),
+                        ["sentAt"] = DateTimeOffset.UtcNow.ToString("o"),
+                    });
+                    await PushPendingSentAsync();
                     if (Str("messageId").Length > 0) await MarkRepliedAsync(Str("messageId"), true);
                     result = State();
+                    break;
+                case "sent":
+                    await PushPendingSentAsync();
+                    try { sentMails = await services.FetchSentAsync(); } catch { }
+                    result = MergedSent();
                     break;
                 case "setReplied":
                     await MarkRepliedAsync(Str("messageId"), data?["value"]?.GetValue<bool>() ?? true);

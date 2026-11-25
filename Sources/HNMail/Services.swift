@@ -50,6 +50,42 @@ struct InboxAPI {
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw AppError.message("Le serveur n'a pas enregistré l'état du mail.") }
     }
 
+    /// Mails envoyés par l'équipe (Mac et Windows).
+    func fetchSent() async throws -> [SentMail] {
+        guard let key = Self.key, Self.isConfigured else { throw AppError.message("Ajoute la clé HN Mail dans les Réglages.") }
+        var request = URLRequest(url: Self.url.appendingPathComponent("sent"))
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AppError.message("Envoyés indisponibles (mets le Worker à jour).")
+        }
+        return ((json["sent"] as? [[String: Any]]) ?? []).compactMap { item in
+            guard let id = item["id"] as? String else { return nil }
+            return SentMail(id: id, mailbox: item["mailbox"] as? String ?? "contact", toEmail: item["toEmail"] as? String ?? "",
+                            toName: item["toName"] as? String ?? "", subject: item["subject"] as? String ?? "",
+                            text: item["text"] as? String ?? "", html: item["html"] as? String ?? "",
+                            sentAt: Self.parseDate(item["sentAt"] as? String) ?? Date(), by: item["by"] as? String ?? "",
+                            inboxId: item["inboxId"] as? String ?? "", template: item["template"] as? String ?? "", synced: true)
+        }
+    }
+
+    func saveSent(_ mail: SentMail) async throws {
+        guard let key = Self.key, Self.isConfigured else { throw AppError.message("Ajoute la clé HN Mail dans les Réglages.") }
+        var request = URLRequest(url: Self.url.appendingPathComponent("sent"))
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "id": mail.id, "mailbox": mail.mailbox, "toEmail": mail.toEmail, "toName": mail.toName, "subject": mail.subject,
+            "text": mail.text, "html": mail.html, "by": mail.by, "inboxId": mail.inboxId, "template": mail.template,
+            "sentAt": ISO8601DateFormatter().string(from: mail.sentAt),
+        ])
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw AppError.message("Le serveur n'a pas gardé le mail envoyé.") }
+    }
+
     static func parse(_ item: [String: Any]) -> MailMessage? {
         guard let id = item["id"] as? String else { return nil }
         let text = (item["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

@@ -14,6 +14,8 @@ final class MailStore: ObservableObject {
     @Published var templates: [ReplyTemplate] = []
     @Published private(set) var replied: [String: Date] = [:]
     @Published var inboxConfigured = InboxAPI.isConfigured
+    @Published var sent: [SentMail] = []
+    @Published var selectedSentID: SentMail.ID?
 
     let brevo = BrevoAPI()
 
@@ -28,7 +30,16 @@ final class MailStore: ObservableObject {
         return dir.appendingPathComponent("templates.json")
     }
 
+    private var sentURL: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("HN Mail", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("sent.json")
+    }
+
     init() {
+        if let data = try? Data(contentsOf: sentURL), let list = try? JSONDecoder().decode([SentMail].self, from: data) {
+            sent = list
+        }
         if let saved = UserDefaults.standard.dictionary(forKey: repliedKey) as? [String: Double] {
             replied = saved.mapValues { Date(timeIntervalSince1970: $0) }
         }
@@ -48,6 +59,7 @@ final class MailStore: ObservableObject {
         case .replied: base = messages.filter { isReplied($0) }
         case .all: base = messages.filter { $0.mailbox == .contact }
         case .news: base = messages.filter { $0.mailbox == .news }
+        case .sent: base = []
         }
         let query = search.trimmingCharacters(in: .whitespaces).lowercased()
         guard !query.isEmpty else { return base }
@@ -60,7 +72,53 @@ final class MailStore: ObservableObject {
         case .replied: return messages.filter { isReplied($0) }.count
         case .all: return messages.filter { $0.mailbox == .contact }.count
         case .news: return messages.filter { $0.mailbox == .news && !isReplied($0) }.count
+        case .sent: return 0
         }
+    }
+
+    // MARK: Envoyés
+
+    var visibleSent: [SentMail] {
+        let query = search.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !query.isEmpty else { return sent }
+        return sent.filter { "\($0.toName) \($0.toEmail) \($0.subject) \($0.text) \($0.by)".lowercased().contains(query) }
+    }
+
+    var selectedSent: SentMail? { sent.first { $0.id == selectedSentID } }
+
+    /// Réponses déjà envoyées à un mail reçu.
+    func sentReplies(to message: MailMessage) -> [SentMail] {
+        sent.filter { $0.inboxId == message.id }.sorted { $0.sentAt < $1.sentAt }
+    }
+
+    /// Garde le mail envoyé sur ce Mac puis le partage avec l'équipe.
+    func recordSent(_ mail: SentMail) {
+        sent.insert(mail, at: 0)
+        saveSentList()
+        Task { await pushPendingSent() }
+    }
+
+    private func saveSentList() {
+        sent = Array(sent.sorted { $0.sentAt > $1.sentAt }.prefix(300))
+        if let data = try? JSONEncoder().encode(sent) { try? data.write(to: sentURL, options: .atomic) }
+    }
+
+    private func pushPendingSent() async {
+        for mail in sent where !mail.synced {
+            guard (try? await InboxAPI().saveSent(mail)) != nil else { return }
+            if let index = sent.firstIndex(where: { $0.id == mail.id }) { sent[index].synced = true }
+        }
+        saveSentList()
+    }
+
+    private func refreshSent() async {
+        await pushPendingSent()
+        guard let remote = try? await InboxAPI().fetchSent() else { return }
+        var merged = Dictionary(uniqueKeysWithValues: remote.map { ($0.id, $0) })
+        for mail in sent where !mail.synced && merged[mail.id] == nil { merged[mail.id] = mail }
+        sent = Array(merged.values)
+        saveSentList()
+        if folder == .sent && selectedSent == nil { selectedSentID = sent.first?.id }
     }
 
     var selected: MailMessage? { messages.first { $0.id == selectedID } }
@@ -95,6 +153,7 @@ final class MailStore: ObservableObject {
             UserDefaults.standard.set(Array(seen.suffix(2000)), forKey: seenKey)
             updateBadge()
             await pushPendingReplied()
+            await refreshSent()
             error = nil
             if selectedID == nil || selected == nil { selectedID = visible.first?.id }
         } catch {

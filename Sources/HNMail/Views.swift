@@ -33,7 +33,13 @@ struct ContentView: View {
             MessageListView()
                 .navigationSplitViewColumnWidth(min: 280, ideal: 330)
         } detail: {
-            if let message = store.selected {
+            if store.folder == .sent {
+                if let mail = store.selectedSent {
+                    SentMailView(mail: mail).id(mail.id)
+                } else {
+                    Text("Choisis un mail envoyé à gauche.").foregroundStyle(.secondary)
+                }
+            } else if let message = store.selected {
                 ReplyView(message: message).id(message.id)
             } else {
                 EmptyStateView()
@@ -63,7 +69,10 @@ struct ContentView: View {
             .frame(width: 600, height: 640)
         }
         .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in showSettings = true }
-        .onChange(of: store.folder) { _ in store.selectedID = store.visible.first?.id }
+        .onChange(of: store.folder) { _ in
+            store.selectedID = store.visible.first?.id
+            store.selectedSentID = store.visibleSent.first?.id
+        }
     }
 }
 
@@ -104,7 +113,7 @@ struct SidebarView: View {
     var body: some View {
         List(selection: Binding<Folder?>(get: { store.folder }, set: { if let value = $0 { store.folder = value } })) {
             Section("contact@") {
-                ForEach([Folder.todo, .replied, .all]) { folder in
+                ForEach([Folder.todo, .replied, .all, .sent]) { folder in
                     Label(folder.title, systemImage: folder.symbol).badge(store.count(folder)).tag(folder)
                 }
             }
@@ -134,6 +143,10 @@ struct MessageListView: View {
     @EnvironmentObject var store: MailStore
 
     var body: some View {
+        if store.folder == .sent { SentListView() } else { receivedList }
+    }
+
+    private var receivedList: some View {
         List(store.visible, selection: $store.selectedID) { message in
             MessageRow(message: message, replied: store.isReplied(message), repliedLabel: store.repliedLabel(message)).tag(message.id)
         }
@@ -152,6 +165,61 @@ struct MessageListView: View {
             }
         }
         .navigationTitle(store.folder.title)
+    }
+}
+
+struct SentListView: View {
+    @EnvironmentObject var store: MailStore
+
+    var body: some View {
+        List(store.visibleSent, selection: $store.selectedSentID) { mail in
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text("À : \(mail.toLabel)").font(.headline).lineLimit(1)
+                    Spacer()
+                    Text(mail.sentAt, format: Date.FormatStyle(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                }
+                Text(mail.subject).fontWeight(.semibold).lineLimit(1)
+                Text(mail.snippet).foregroundStyle(.secondary).lineLimit(2)
+                Text("Envoyé par \(mail.by)\(mail.synced ? "" : " · pas encore partagé")")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(brandColor.opacity(0.12)))
+                    .foregroundStyle(brandColor)
+            }
+            .padding(.vertical, 4)
+            .tag(mail.id)
+        }
+        .listStyle(.inset)
+        .overlay {
+            if store.visibleSent.isEmpty {
+                Text(store.search.isEmpty ? "Aucun mail envoyé pour l'instant" : "Aucun résultat").foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle(Folder.sent.title)
+    }
+}
+
+/// Un mail envoyé, affiché exactement comme la personne l'a reçu.
+struct SentMailView: View {
+    let mail: SentMail
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(mail.subject).font(.title2.bold()).textSelection(.enabled)
+                Text("À : \(mail.toName.isEmpty ? mail.toEmail : "\(mail.toName) <\(mail.toEmail)>")").textSelection(.enabled)
+                Text("Envoyé depuis \(mail.fromAddress) par \(mail.by), le \(mail.sentAt.formatted(date: .long, time: .shortened))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(20)
+            Divider()
+            if mail.html.isEmpty {
+                ScrollView { Text(mail.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(20) }
+            } else {
+                HTMLView(html: mail.html)
+            }
+        }
     }
 }
 
@@ -223,6 +291,16 @@ struct ReplyView: View {
                         Label("Pièces jointes : \(message.attachments.joined(separator: ", ")) (visibles dans ton Gmail)", systemImage: "paperclip")
                             .font(.caption).foregroundStyle(.secondary)
                     }
+                    ForEach(store.sentReplies(to: message)) { reply in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label("Réponse envoyée par \(reply.by) · \(reply.sentAt.formatted(date: .abbreviated, time: .shortened))", systemImage: "paperplane.fill")
+                                .font(.caption.weight(.semibold)).foregroundStyle(brandColor)
+                            Text(reply.text).font(.callout).textSelection(.enabled)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(brandColor.opacity(0.07)))
+                    }
                 }
                 .padding(20)
             }
@@ -245,9 +323,11 @@ struct Recipient {
     var mailbox: Mailbox
     var suggestedTemplate: String
     var receivedBody = ""
+    var inboxID = ""
 
     init(message: MailMessage) {
         receivedBody = message.body
+        inboxID = message.id
         email = message.fromEmail
         name = message.fromName
         firstName = message.firstName
@@ -485,6 +565,9 @@ struct ComposerView: View {
             try await store.brevo.send(from: target.mailbox, toEmail: email, toName: target.name, subject: target.subject, html: html, inReplyTo: target.inReplyTo)
             status = "Envoyé à \(email) ✓"
             statusIsError = false
+            store.recordSent(SentMail(id: UUID().uuidString, mailbox: target.mailbox == .news ? "news" : "contact", toEmail: email,
+                                      toName: target.name, subject: target.subject, text: text, html: html, sentAt: Date(),
+                                      by: store.teamName, inboxId: target.inboxID, template: templateID))
             onSent()
         } catch {
             status = error.localizedDescription

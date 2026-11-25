@@ -31,6 +31,29 @@ public sealed class Services(Store store)
     }
 
     /// <summary>Marque un mail « répondu » (ou à traiter) pour toute l'équipe.</summary>
+    /// <summary>Mails envoyés par l'équipe (Mac et Windows), gardés sur le Worker.</summary>
+    public async Task<JsonArray> FetchSentAsync()
+    {
+        var key = store.GetSecret("inboxKey");
+        if (string.IsNullOrEmpty(key) || key.Length < 24) throw new AppException("Ajoute la clé HN Mail dans les Réglages.");
+        using var request = new HttpRequestMessage(HttpMethod.Get, InboxUrl + "/sent");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        using var response = await Http.SendAsync(request);
+        if (!response.IsSuccessStatusCode) throw new AppException("Envoyés indisponibles (mets le Worker à jour).");
+        return JsonNode.Parse(await response.Content.ReadAsStringAsync())?["sent"] as JsonArray ?? new JsonArray();
+    }
+
+    public async Task SaveSentAsync(JsonNode mail)
+    {
+        var key = store.GetSecret("inboxKey");
+        if (string.IsNullOrEmpty(key) || key.Length < 24) throw new AppException("Ajoute la clé HN Mail dans les Réglages.");
+        using var request = new HttpRequestMessage(HttpMethod.Post, InboxUrl + "/sent");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        request.Content = new StringContent(mail.ToJsonString(), Encoding.UTF8, "application/json");
+        using var response = await Http.SendAsync(request);
+        if (!response.IsSuccessStatusCode) throw new AppException("Le serveur n'a pas gardé le mail envoyé.");
+    }
+
     public async Task SetRepliedAsync(string id, bool value, string by)
     {
         var key = store.GetSecret("inboxKey");

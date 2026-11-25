@@ -99,6 +99,8 @@ let replied = {};
 let templates = DEFAULT_TEMPLATES.map((t) => structuredClone(t));
 let folder = 'todo';
 let selectedId = null;
+let sentMails = [];
+let selectedSentId = null;
 let search = '';
 let error = '';
 let state = {};
@@ -132,8 +134,40 @@ function visible() {
 const template = (id) => templates.find((t) => t.id === id) || templates[templates.length - 1] || DEFAULT_TEMPLATES[5];
 
 // ---------- affichage ----------
+async function loadSent() {
+  try { sentMails = (await call('sent')) || []; } catch { /* Worker pas à jour : on garde la liste actuelle */ }
+  render();
+}
+const sentWhen = (s) => new Date(s.sentAt || Date.now()).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+function visibleSent() {
+  const q = search.trim().toLowerCase();
+  return sentMails.filter((s) => !q || `${s.toName} ${s.toEmail} ${s.subject} ${s.text} ${s.by}`.toLowerCase().includes(q));
+}
+function renderSent() {
+  const list = $('#list');
+  const items = visibleSent();
+  if (!items.find((s) => s.id === selectedSentId)) selectedSentId = items[0]?.id ?? null;
+  list.innerHTML = items.length ? items.map((s) => `<div class="item${s.id === selectedSentId ? ' on' : ''}" data-sent="${esc(s.id)}"><div class="top"><strong>À : ${esc(s.toName || s.toEmail)}</strong><time>${esc(sentWhen(s))}</time></div>
+      <span class="sub">${esc(s.subject)}</span><span class="pre">${esc((s.text || '').slice(0, 220))}</span>
+      <span class="tag">Envoyé par ${esc(s.by || 'Équipe')}${s.pending ? ' · pas encore partagé' : ''}</span></div>`).join('')
+    : `<div class="empty">${search ? 'Aucun résultat' : "Aucun mail envoyé pour l'instant"}</div>`;
+  const s = sentMails.find((x) => x.id === selectedSentId);
+  shownId = null;
+  $('#main').innerHTML = s ? `<div class="read"><h2>${esc(s.subject)}</h2>
+      <div class="who">À : <strong>${esc(s.toName ? `${s.toName} <${s.toEmail}>` : s.toEmail)}</strong><br>
+      <small>Envoyé depuis ${s.mailbox === 'news' ? 'news' : 'contact'}@heivoli-network.fr par ${esc(s.by || 'Équipe')}, le ${esc(new Date(s.sentAt).toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short' }))}</small></div></div>
+      <iframe class="sent-frame" sandbox="" id="sent-frame"></iframe>`
+    : '<div class="empty">Choisis un mail envoyé à gauche.</div>';
+  if (s) $('#sent-frame').srcdoc = s.html || `<pre style="font:14px system-ui;white-space:pre-wrap">${esc(s.text)}</pre>`;
+}
+
 function render() {
   document.querySelectorAll('.side a[data-folder]').forEach((a) => a.classList.toggle('on', a.dataset.folder === folder));
+  if (folder === 'sent') {
+    for (const f of ['todo', 'replied', 'all', 'news']) $(`[data-count="${f}"]`).textContent = messages.filter((m) => inFolder(m, f) && (f !== 'news' || !isReplied(m))).length || '';
+    renderSent();
+    return;
+  }
   for (const f of ['todo', 'replied', 'all', 'news']) {
     const n = messages.filter((m) => inFolder(m, f) && (f !== 'news' || !isReplied(m))).length;
     $(`[data-count="${f}"]`).textContent = n || '';
@@ -161,6 +195,7 @@ function render() {
 
 let shownId = null;
 function renderMain() {
+  if (folder === 'sent') { renderSent(); return; }
   const main = $('#main');
   const m = messages.find((x) => x.id === selectedId);
   if (!m) {
@@ -176,7 +211,8 @@ function renderMain() {
     <div class="from"><div class="av">${esc(firstName(m).slice(0, 1) || '?')}</div><div class="who"><strong>${esc(m.fromName || m.fromEmail)}</strong><br>${esc(m.fromEmail)} · à ${m.mailbox === 'news' ? 'news' : 'contact'}@heivoli-network.fr</div>
     <button id="toggle-replied">${isReplied(m) ? 'Remettre à traiter' : 'Marquer comme traité'}</button></div>
     <div class="text">${esc(m.text)}</div>
-    ${m.attachments?.length ? `<div class="attach">📎 Pièces jointes : ${esc(m.attachments.join(', '))} (visibles dans le Gmail de l'équipe)</div>` : ''}</div>
+    ${m.attachments?.length ? `<div class="attach">📎 Pièces jointes : ${esc(m.attachments.join(', '))} (visibles dans le Gmail de l'équipe)</div>` : ''}
+    ${sentMails.filter((s) => s.inboxId === m.id).reverse().map((s) => `<div class="sent-reply"><strong>📤 Réponse envoyée par ${esc(s.by || 'Équipe')} · ${esc(sentWhen(s))}</strong><div>${esc(s.text || '')}</div></div>`).join('')}</div>
     <div class="compose-host" id="reply-host"></div>`;
   $('#toggle-replied').addEventListener('click', async () => {
     state = await call('setReplied', { messageId: m.id, value: !isReplied(m) });
@@ -252,8 +288,9 @@ function mountComposer(host, target) {
       state = await call('send', {
         mailbox: target.mailbox, toEmail: email, toName: target.name || '', subject: target.subject,
         html: renderMail(template(tplId), text, target.first, target.originalSubject, buttonLabel),
-        inReplyTo: target.inReplyTo || '', messageId: target.messageId || '',
+        inReplyTo: target.inReplyTo || '', messageId: target.messageId || '', text, template: tplId,
       });
+      loadSent();
       replied = state.replied || replied;
       if (target.messageId) setMessages(state.messages);
       msg.className = 'msg ok'; msg.textContent = `Envoyé à ${email} ✓`;
@@ -325,6 +362,7 @@ async function refresh() {
     const list = await call('refresh');
     setMessages(list);
     error = '';
+    loadSent();
   } catch (e) { error = e.message; }
   loading = false;
   render();
@@ -429,7 +467,12 @@ $('#new').addEventListener('click', openNewMail);
 $('#refresh').addEventListener('click', refresh);
 $('#search').addEventListener('input', (e) => { search = e.target.value; render(); });
 document.querySelectorAll('.side a[data-folder]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); folder = a.dataset.folder; selectedId = null; shownId = null; render(); }));
-$('#list').addEventListener('click', (e) => { const item = e.target.closest('.item'); if (item) { selectedId = item.dataset.id; render(); } });
+$('#list').addEventListener('click', (e) => {
+  const item = e.target.closest('.item');
+  if (!item) return;
+  if (item.dataset.sent) selectedSentId = item.dataset.sent; else selectedId = item.dataset.id;
+  render();
+});
 
 // ---------- gestion des templates ----------
 let tplSel = null;
